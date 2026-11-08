@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arcade — Daily, Tournament & Trophies</title>
+<style>
+  :root{--bg:#0a0c14;--panel:#121626;--border:#232a44;--text:#e8ecf8;--muted:#8b94b0;--glow:#5ce1ff;--gold:#f3c969}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{min-height:100vh;background:var(--bg);color:var(--text);
+    font-family:"Avenir Next","Segoe UI",system-ui,sans-serif;padding:40px 20px 70px;
+    background-image:radial-gradient(ellipse 80% 50% at 50% -10%,rgba(92,120,255,.14),transparent)}
+  header{text-align:center;margin-bottom:24px}
+  h1{font-size:clamp(24px,4.4vw,40px);letter-spacing:10px;text-indent:10px;color:var(--glow);
+    text-shadow:0 0 7px rgba(92,225,255,.9),0 0 26px rgba(92,225,255,.5)}
+  header p{color:var(--muted);letter-spacing:3px;margin-top:12px;font-size:12px;text-transform:uppercase}
+  .wrap{max-width:780px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:16px}
+  .card h2{font-size:13px;letter-spacing:3px;color:var(--muted);text-transform:uppercase;margin-bottom:14px}
+  label{display:block;font-size:11px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
+  input{font:600 15px inherit;color:var(--text);background:#0c0f1c;border:1px solid var(--border);
+    border-radius:9px;padding:11px 13px;width:100%}
+  input:focus{outline:none;border-color:var(--glow)}
+  button{font:700 12px/1 inherit;letter-spacing:2px;text-transform:uppercase;cursor:pointer;
+    color:#07101c;background:var(--glow);border:0;border-radius:999px;padding:12px 20px;
+    transition:transform .12s,filter .12s}
+  button:hover{filter:brightness(1.1);transform:translateY(-1px)}
+  button.ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
+  button.ghost:hover{color:var(--glow);border-color:var(--glow)}
+  button:disabled{opacity:.35;cursor:not-allowed;transform:none}
+  .tabs{display:flex;gap:8px;justify-content:center;margin-bottom:18px;flex-wrap:wrap}
+  .tabs button{background:transparent;color:var(--muted);border:1px solid var(--border)}
+  .tabs button.on{background:var(--glow);color:#07101c;border-color:var(--glow)}
+  .leg{display:flex;align-items:center;gap:14px;background:#0c0f1c;border:1px solid var(--border);
+    border-radius:11px;padding:14px;margin-bottom:10px}
+  .leg .num{font:800 16px/1 "Courier New",monospace;color:var(--muted);width:26px;flex:none}
+  .leg .info{flex:1;min-width:0}
+  .leg .n{font-weight:700;font-size:16px}
+  .leg .s{font-size:12px;color:var(--muted);margin-top:4px}
+  .leg.done{border-color:#2f6b4a}
+  .leg.done .num{color:#4ade80}
+  .leg.now{border-color:var(--glow)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{text-align:left;font-size:10px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;
+    padding:0 8px 9px;font-weight:600}
+  td{padding:9px 8px;border-top:1px solid var(--border)}
+  td.r{text-align:right;font-family:"Courier New",monospace}
+  tr.me td{color:var(--glow)}
+  .rank{font:800 13px/1 "Courier New",monospace;color:var(--muted);width:30px}
+  tr:nth-child(1) .rank{color:var(--gold)}
+  .empty{color:var(--muted);font-size:13px;text-align:center;padding:18px 0}
+  .err{color:#ff6b8a;font-size:13px;margin-top:10px;min-height:18px}
+  .note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:12px}
+  a.back{position:fixed;bottom:14px;left:14px;font:700 11px/1 "Courier New",monospace;letter-spacing:2px;
+    color:#cfd8ea;background:rgba(10,12,20,.72);border:1px solid rgba(140,160,210,.4);
+    padding:9px 13px;border-radius:999px;text-decoration:none;opacity:.6}
+  a.back:hover{opacity:1}
+  .hide{display:none}
+  #play{position:fixed;inset:0;z-index:500;background:#070a12}
+  #play iframe{display:block;width:100%;height:100%;border:0}
+  #playbar{position:fixed;bottom:14px;right:14px;z-index:501;display:flex;gap:10px;align-items:center}
+  #playbar .tag{font:700 11px/1 "Courier New",monospace;letter-spacing:2px;color:var(--muted);
+    background:rgba(10,12,20,.8);border:1px solid var(--border);padding:10px 13px;border-radius:999px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>DAILY</h1>
+    <p id="sub">one seeded run &middot; everyone gets the same three games</p>
+  </header>
+
+  <div class="tabs">
+    <button data-tab="daily" class="on">Gauntlet</button>
+    <button data-tab="table">Tournament</button>
+    <button data-tab="trophy">Trophies</button>
+  </div>
+
+  <!-- ---------- daily gauntlet ---------- -->
+  <section id="tab-daily">
+    <div class="card">
+      <h2 id="dailyHead">Today's gauntlet</h2>
+      <div id="legs"></div>
+      <div style="display:flex;gap:12px;align-items:flex-end;margin-top:16px;flex-wrap:wrap">
+        <div style="flex:1;min-width:160px">
+          <label for="nm">Your name</label>
+          <input id="nm" maxlength="16" placeholder="player">
+        </div>
+        <button id="submitBtn" disabled>Submit run</button>
+      </div>
+      <div class="err" id="dailyErr"></div>
+      <p class="note">Each leg is scored against par, so the three games count
+        equally. Your all-time records are left untouched &mdash; the gauntlet
+        only measures the run you do here.</p>
+    </div>
+    <div class="card">
+      <h2>Today's board</h2>
+      <div id="dailyBoard"></div>
+    </div>
+  </section>
+
+  <!-- ---------- tournament ---------- -->
+  <section id="tab-table" class="hide">
+    <div class="card">
+      <h2>Standings</h2>
+      <div id="standings"></div>
+      <p class="note">Points come from every leaderboard on the server: 5 for a
+        first place, 4 for second, down to 1 for fifth. Win at more games, not
+        just harder at one.</p>
+    </div>
+  </section>
+
+  <!-- ---------- replay trophies ---------- -->
+  <section id="tab-trophy" class="hide">
+    <div class="card">
+      <h2>Recorded runs</h2>
+      <div id="trophies"></div>
+      <p class="note">Runs saved by players. Open the game from the arcade and
+        it will offer you the best ghost to race against.</p>
+    </div>
+  </section>
+</div>
+
+<div id="play" class="hide">
+  <iframe id="frame" title="gauntlet leg"></iframe>
+</div>
+<div id="playbar" class="hide">
+  <span class="tag" id="playTag"></span>
+  <button id="doneBtn">Finish leg</button>
+</div>
+
+<a href="../index.html" class="back">&lt; ARCADE</a>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var esc = function (s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; };
+
+  var NAME_KEY = 'arcade_name_v1';
+  var day = null;          // {date, seed, games:[...]}
+  var legScores = [];      // raw per-game score for each finished leg
+  var current = -1;
+
+  $('nm').value = localStorage.getItem(NAME_KEY) || '';
+  $('nm').addEventListener('input', function () {
+    localStorage.setItem(NAME_KEY, $('nm').value.trim());
+  });
+
+  /* ---------- tabs ---------- */
+  Array.prototype.forEach.call(document.querySelectorAll('.tabs button'), function (b) {
+    b.addEventListener('click', function () {
+      Array.prototype.forEach.call(document.querySelectorAll('.tabs button'), function (o) {
+        o.classList.toggle('on', o === b);
+      });
+      ['daily', 'table', 'trophy'].forEach(function (t) {
+        $('tab-' + t).classList.toggle('hide', t !== b.dataset.tab);
+      });
+      if (b.dataset.tab === 'table') loadTable();
+      if (b.dataset.tab === 'trophy') loadTrophies();
+    });
+  });
+
+  /* ---------- api ---------- */
+  function api(path, body) {
+    var opt = body ? { method: 'POST', headers: { 'content-type': 'application/json' },
+                       body: JSON.stringify(body) } : {};
+    return fetch(path, opt).then(function (r) { return r.json(); });
+  }
+
+  /* ---------- daily ---------- */
+  function renderLegs() {
+    var el = $('legs');
+    el.innerHTML = '';
+    day.games.forEach(function (g, i) {
+      var done = legScores[i] !== undefined;
+      var now = !done && i === legScores.filter(function (v) { return v !== undefined; }).length;
+      var d = document.createElement('div');
+      d.className = 'leg' + (done ? ' done' : now ? ' now' : '');
+      d.innerHTML =
+        '<div class="num">' + (done ? '&#10003;' : (i + 1)) + '</div>' +
+        '<div class="info"><div class="n">' + esc(g.name) + '</div>' +
+        '<div class="s">' + (done ? 'scored ' + Math.round(legScores[i]) + ' ' + esc(g.unit)
+                                  : 'par ' + g.par + ' ' + esc(g.unit)) + '</div></div>';
+      var b = document.createElement('button');
+      b.textContent = done ? 'Replay' : 'Play';
+      if (done) b.className = 'ghost';
+      b.addEventListener('click', function () { startLeg(i); });
+      d.appendChild(b);
+      el.appendChild(d);
+    });
+    var complete = day.games.every(function (_, i) { return legScores[i] !== undefined; });
+    $('submitBtn').disabled = !complete;
+  }
+
+  /* A leg is measured by temporarily clearing the key the game already writes
+     its record to, so we read this run rather than their all-time best. The
+     original value is restored afterwards, so playing the gauntlet can never
+     cost someone a record. */
+  var saved = null;
+  function startLeg(i) {
+    current = i;
+    var g = day.games[i];
+    saved = localStorage.getItem(g.store);
+    localStorage.removeItem(g.store);
+    $('frame').src = '../' + g.id;
+    $('playTag').textContent = 'LEG ' + (i + 1) + '/' + day.games.length + ' — ' + g.name.toUpperCase();
+    $('play').classList.remove('hide');
+    $('playbar').classList.remove('hide');
+  }
+
+  function finishLeg() {
+    var g = day.games[current];
+    var run = parseFloat(localStorage.getItem(g.store) || '0') || 0;
+    // restore their all-time record, keeping whichever is better
+    var before = parseFloat(saved || '0') || 0;
+    if (saved === null && !run) localStorage.removeItem(g.store);
+    else localStorage.setItem(g.store, String(Math.max(before, run)));
+
+    legScores[current] = run;
+    $('frame').src = 'about:blank';
+    $('play').classList.add('hide');
+    $('playbar').classList.add('hide');
+    current = -1;
+    renderLegs();
+  }
+  $('doneBtn').addEventListener('click', finishLeg);
+
+  function board(list, hiName) {
+    if (!list || !list.length) return '<div class="empty">No runs yet today. Be first.</div>';
+    var rows = list.map(function (r, i) {
+      return '<tr' + (r.name === hiName ? ' class="me"' : '') + '>' +
+        '<td class="rank">' + (i + 1) + '</td><td>' + esc(r.name) + '</td>' +
+        '<td class="r">' + esc(r.detail || '') + '</td>' +
+        '<td class="r"><b>' + r.score + '</b></td></tr>';
+    }).join('');
+    return '<table><thead><tr><th></th><th>Player</th><th style="text-align:right">Legs</th>' +
+           '<th style="text-align:right">Total</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  function loadDaily() {
+    api('/api/daily').then(function (d) {
+      day = d;
+      $('sub').textContent = d.date + ' · seed ' + d.seed;
+      $('dailyHead').textContent = "Today's gauntlet — " + d.games.length + ' games';
+      renderLegs();
+      $('dailyBoard').innerHTML = board(d.board, $('nm').value.trim());
+    }).catch(function () {
+      $('legs').innerHTML = '<div class="empty">The arcade server is not reachable. ' +
+        'The gauntlet needs it to set today\'s games.</div>';
+    });
+  }
+
+  $('submitBtn').addEventListener('click', function () {
+    $('dailyErr').textContent = '';
+    $('submitBtn').disabled = true;
+    api('/api/daily', {
+      date: day.date,
+      name: $('nm').value.trim() || 'player',
+      legs: day.games.map(function (_, i) { return legScores[i]; }),
+    }).then(function (r) {
+      if (r.error) { $('dailyErr').textContent = r.error; $('submitBtn').disabled = false; return; }
+      $('dailyBoard').innerHTML = board(r.board, $('nm').value.trim());
+      $('dailyErr').style.color = '#4ade80';
+      $('dailyErr').textContent = 'Submitted — ' + r.total + ' points, ' +
+        (r.place ? 'rank ' + r.place : 'off the board');
+    }).catch(function (e) {
+      $('dailyErr').textContent = 'Could not submit: ' + e.message;
+      $('submitBtn').disabled = false;
+    });
+  });
+
+  /* ---------- tournament ---------- */
+  function loadTable() {
+    api('/api/tournament').then(function (d) {
+      if (!d.standings || !d.standings.length) {
+        $('standings').innerHTML = '<div class="empty">No results yet. Play anything and ' +
+          'get into a top five.</div>';
+        return;
+      }
+      var me = $('nm').value.trim();
+      $('standings').innerHTML = '<table><thead><tr><th></th><th>Player</th>' +
+        '<th style="text-align:right">Games</th><th style="text-align:right">Points</th>' +
+        '</tr></thead><tbody>' + d.standings.map(function (r, i) {
+          return '<tr' + (r.name === me ? ' class="me"' : '') + '><td class="rank">' + (i + 1) +
+            '</td><td>' + esc(r.name) + '</td><td class="r">' + Object.keys(r.games).length +
+            '</td><td class="r"><b>' + r.points + '</b></td></tr>';
+        }).join('') + '</tbody></table>';
+    }).catch(function () {
+      $('standings').innerHTML = '<div class="empty">Server not reachable.</div>';
+    });
+  }
+
+  /* ---------- trophies ---------- */
+  function loadTrophies() {
+    api('/api/replays').then(function (d) {
+      if (!d.list || !d.list.length) {
+        $('trophies').innerHTML = '<div class="empty">No runs recorded yet.</div>';
+        return;
+      }
+      $('trophies').innerHTML = '<table><thead><tr><th>Game</th><th>Player</th>' +
+        '<th style="text-align:right">Score</th></tr></thead><tbody>' +
+        d.list.map(function (r) {
+          return '<tr><td>' + esc(r.game) + '</td><td>' + esc(r.name) +
+            '</td><td class="r"><b>' + r.score + '</b></td></tr>';
+        }).join('') + '</tbody></table>';
+    }).catch(function () {
+      $('trophies').innerHTML = '<div class="empty">Server not reachable.</div>';
+    });
+  }
+
+  loadDaily();
+})();
+</script>
+</body>
+</html>

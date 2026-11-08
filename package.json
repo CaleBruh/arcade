@@ -1,0 +1,15 @@
+{
+  "name": "arcade-multiplayer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Static arcade plus authoritative multiplayer rooms. No dependencies.",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "node server/selftest.js && node server/storetest.js && node server/apitest.js && node server/roomtest.js",
+    "party": "PORT=8080 node server/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

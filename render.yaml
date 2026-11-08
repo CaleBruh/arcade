@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: arcade-multiplayer
+    runtime: node
+    # Free tier, deliberately — with two consequences worth knowing:
+    #
+    #   1. It spins down after 15 minutes without traffic, and the next
+    #      visitor waits ~50s for a cold start. During a party this never
+    #      happens, because people are playing continuously. It only bites
+    #      the first person after a quiet spell.
+    #   2. There is no persistent disk on free, so leaderboards, tournament
+    #      points and ghosts reset whenever the instance restarts or you
+    #      redeploy. Fine for one evening, wrong for a season-long ladder.
+    #
+    # Both are fixed by switching to `plan: starter` and re-adding the disk
+    # block kept at the bottom of this file.
+    plan: free
+    buildCommand: ""       # nothing to build — no dependencies, no lockfile
+    startCommand: node server/server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+
+# Rooms live in memory, so this must never run as more than one instance —
+# half your players would create room ABCD on machine A and the other half
+# would fail to find it on machine B. The free plan cannot scale anyway,
+# which conveniently enforces that.
+#
+# Paid upgrade (persistent leaderboards, no spin-down):
+#
+#   plan: starter
+#   numInstances: 1
+#   envVars:
+#     - key: DATA_DIR
+#       value: /data
+#   disk:
+#     name: arcade-data
+#     mountPath: /data
+#     sizeGB: 1

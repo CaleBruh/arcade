@@ -1,0 +1,2143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Potion Brewery</title>
+<style>
+  :root{
+    --bg1:#0d0a1a; --bg2:#191028; --bg3:#221531;
+    --panel-border:rgba(150,120,80,.35);
+    --iron:#4a4252; --iron-hi:#6b6080;
+    --wood:#3a2a1c; --wood-hi:#5a4630;
+    --candle:#ffb45e; --ember:#ff8a3c;
+    --gold:#f3c969; --gold-dim:#a98b3f;
+    --green:#7cf29c; --green-glow:#49e07a;
+    --purple:#b48cff; --text:#e8e2f7; --muted:#9a8fc0;
+    --ink:#2b1f10; --red:#ff7d7d;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    font-family:"Segoe UI",system-ui,-apple-system,sans-serif;
+    color:var(--text);
+    background:
+      radial-gradient(1100px 560px at 18% -10%, rgba(110,60,200,.22), transparent 60%),
+      radial-gradient(900px 500px at 88% 112%, rgba(255,140,60,.07), transparent 60%),
+      radial-gradient(700px 420px at 55% 108%, rgba(40,180,120,.08), transparent 60%),
+      linear-gradient(160deg, var(--bg1), var(--bg2) 55%, var(--bg3));
+    background-attachment:fixed;
+    min-height:100vh;
+  }
+  /* faint starfield over the night behind the workshop */
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;opacity:.45;
+    background-image:
+      radial-gradient(1px 1px at 12% 22%, #fff8, transparent),
+      radial-gradient(1px 1px at 68% 12%, #fff6, transparent),
+      radial-gradient(1.5px 1.5px at 42% 68%, #fff5, transparent),
+      radial-gradient(1px 1px at 86% 48%, #fff7, transparent),
+      radial-gradient(1px 1px at 28% 88%, #fff5, transparent),
+      radial-gradient(1.5px 1.5px at 92% 82%, #fff4, transparent),
+      radial-gradient(1px 1px at 55% 35%, #fff6, transparent);
+  }
+  header{text-align:center;padding:20px 10px 4px;position:relative}
+  header h1{
+    font-size:clamp(28px,4vw,42px);letter-spacing:4px;
+    font-family:Georgia,"Times New Roman",serif;
+    background:linear-gradient(180deg,#fff3cf,var(--gold) 50%,#9c702a 90%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    text-shadow:0 0 30px rgba(243,201,105,.22);
+    font-variant:small-caps;
+  }
+  header p{color:var(--muted);font-size:13px;margin-top:2px;font-style:italic;font-family:Georgia,serif}
+  header .flourish{display:block;margin:6px auto 0;opacity:.8}
+
+  .layout{
+    display:grid;gap:18px;padding:16px;max-width:1420px;margin:0 auto;
+    grid-template-columns:minmax(320px,1.1fr) minmax(300px,1fr) minmax(320px,1fr);
+    align-items:start;
+  }
+  @media (max-width:1100px){ .layout{grid-template-columns:1fr 1fr} .col-left{grid-column:1/-1} }
+  @media (max-width:720px){ .layout{grid-template-columns:1fr} }
+
+  /* ============ PARCHMENT & IRONWORK PANELS ============ */
+  .panel{
+    position:relative;
+    background:
+      radial-gradient(130% 80% at 50% -5%, rgba(255,190,110,.06), transparent 55%),
+      repeating-linear-gradient(0deg, rgba(255,245,220,.012) 0 1px, transparent 1px 3px),
+      repeating-linear-gradient(90deg, rgba(0,0,0,.045) 0 2px, transparent 2px 6px),
+      radial-gradient(90% 120% at 50% 110%, rgba(0,0,0,.4), transparent 60%),
+      linear-gradient(170deg,#2d231a,#231b12 55%,#1b140d);
+    border:1px solid var(--wood-hi);
+    border-radius:12px;padding:18px 16px 16px;
+    box-shadow:
+      0 16px 36px rgba(0,0,0,.5),
+      inset 0 0 0 1px rgba(0,0,0,.6),
+      inset 0 1px 0 rgba(255,220,160,.08),
+      inset 0 0 70px rgba(0,0,0,.35);
+  }
+  /* carved inner frame with corner rivets */
+  .panel::before{
+    content:"";position:absolute;inset:6px;border:1px solid rgba(243,201,105,.14);
+    border-radius:8px;pointer-events:none;z-index:0;
+    background-image:
+      radial-gradient(4px 4px at 8px 8px, #9a8465 45%, #41352a 60%, transparent 72%),
+      radial-gradient(4px 4px at calc(100% - 8px) 8px, #9a8465 45%, #41352a 60%, transparent 72%),
+      radial-gradient(4px 4px at 8px calc(100% - 8px), #9a8465 45%, #41352a 60%, transparent 72%),
+      radial-gradient(4px 4px at calc(100% - 8px) calc(100% - 8px), #9a8465 45%, #41352a 60%, transparent 72%);
+    background-repeat:no-repeat;
+  }
+  .panel>*{position:relative;z-index:1}
+  .panel h2{
+    font-size:15px;letter-spacing:3px;text-transform:uppercase;color:var(--gold);
+    font-family:Georgia,serif;font-weight:700;
+    text-shadow:0 1px 0 #000, 0 0 16px rgba(243,201,105,.25);
+    border-bottom:double 3px rgba(243,201,105,.25);padding-bottom:8px;margin-bottom:12px;
+    display:flex;justify-content:space-between;align-items:center;
+  }
+
+  /* ---------- LEFT: the workshop ---------- */
+  .counter{text-align:center;margin-bottom:8px}
+  .counter .big{
+    font-size:clamp(28px,3.4vw,38px);font-weight:700;color:var(--green);
+    font-family:Georgia,serif;
+    text-shadow:0 0 18px rgba(73,224,122,.5),0 2px 2px rgba(0,0,0,.6);
+    font-variant-numeric:tabular-nums;
+    transition:transform .1s ease;
+  }
+  .counter .big.tick{animation:tickPop .22s ease}
+  @keyframes tickPop{40%{transform:scale(1.055)}100%{transform:scale(1)}}
+  .counter .sub{color:var(--muted);font-size:14px;margin-top:2px;font-style:italic}
+  .counter .sub b{color:var(--purple);font-style:normal}
+
+  .cauldron-zone{
+    position:relative;display:flex;justify-content:center;align-items:flex-end;
+    min-height:340px;padding:10px 0 2px;margin-bottom:10px;
+    user-select:none;-webkit-user-select:none;
+    overflow:hidden;border-radius:10px;
+    border:1px solid #453526;
+    background:
+      radial-gradient(120% 90% at 50% 100%, rgba(255,140,60,.09), transparent 55%),
+      radial-gradient(80% 60% at 22% 20%, rgba(150,180,255,.07), transparent 60%),
+      linear-gradient(180deg,#171022,#120c1c 60%,#0e0914);
+    box-shadow:inset 0 0 60px rgba(0,0,0,.65), inset 0 1px 0 rgba(255,255,255,.04);
+  }
+  .scene-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+
+  /* ambient scene animations */
+  .moon{animation:moonDrift 46s ease-in-out infinite alternate}
+  @keyframes moonDrift{to{transform:translateX(16px)}}
+  .beam{animation:beamPulse 9s ease-in-out infinite}
+  @keyframes beamPulse{0%,100%{opacity:.45}50%{opacity:.85}}
+  .glint{opacity:0;animation:glint 6s ease-in-out infinite}
+  .glint.g2{animation-delay:1.3s}
+  .glint.g3{animation-delay:2.6s}
+  .glint.g4{animation-delay:3.9s}
+  .glint.g5{animation-delay:5s}
+  @keyframes glint{0%,76%,100%{opacity:0}84%{opacity:.95}92%{opacity:0}}
+  .herb{transform-box:fill-box;transform-origin:50% 0;animation:sway 6s ease-in-out infinite alternate}
+  .herb.h2{animation-duration:7.5s;animation-delay:.8s}
+  @keyframes sway{from{transform:rotate(-2.4deg)}to{transform:rotate(2.6deg)}}
+  .mote{
+    position:absolute;border-radius:50%;pointer-events:none;opacity:0;z-index:1;
+    background:rgba(228,238,255,.55);box-shadow:0 0 6px rgba(205,222,255,.65);
+    animation:moteDrift linear infinite;
+  }
+  @keyframes moteDrift{
+    0%{transform:translate(0,0);opacity:0}
+    18%{opacity:.75}
+    78%{opacity:.45}
+    100%{transform:translate(28px,-54px);opacity:0}
+  }
+
+  /* ---------- the cauldron itself ---------- */
+  #cauldron{
+    width:min(250px,64vw);cursor:pointer;border:none;background:none;
+    position:relative;z-index:2;
+    transition:transform .08s ease;
+    filter:drop-shadow(0 0 24px rgba(73,224,122,.3)) drop-shadow(0 -6px 22px rgba(255,138,60,.14)) drop-shadow(0 12px 16px rgba(0,0,0,.55));
+    -webkit-tap-highlight-color:transparent;
+  }
+  #cauldron:hover{transform:scale(1.02)}
+  #cauldron.squish{animation:squish .24s cubic-bezier(.3,1.3,.5,1)}
+  @keyframes squish{
+    0%{transform:scale(1)}
+    35%{transform:scale(.95,.84)}
+    70%{transform:scale(1.03,1.06)}
+    100%{transform:scale(1)}
+  }
+  .brew-glow{animation:pulse 3s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.7}50%{opacity:1}}
+  .flame{transform-box:fill-box;transform-origin:50% 100%;animation:flick .85s ease-in-out infinite alternate}
+  .flame.f2{animation-duration:.68s;animation-delay:.2s}
+  .flame.f3{animation-duration:1.05s;animation-delay:.45s}
+  @keyframes flick{from{transform:scaleY(.9) scaleX(1.02)}to{transform:scaleY(1.14) scaleX(.93)}}
+  .fire-glow{animation:glowPulse 1.6s ease-in-out infinite alternate}
+  @keyframes glowPulse{from{opacity:.5}to{opacity:.95}}
+  .ember-dot{transform-box:fill-box;animation:emberUp 2.6s ease-out infinite;opacity:0}
+  .ember-dot.e2{animation-delay:1.3s;animation-duration:3.1s}
+  @keyframes emberUp{0%{transform:translateY(0);opacity:0}14%{opacity:.9}100%{transform:translateY(-48px);opacity:0}}
+  .liq-hi{animation:liqDrift 5.5s ease-in-out infinite alternate}
+  @keyframes liqDrift{from{transform:translateX(0)}to{transform:translateX(38px)}}
+  .steam{opacity:0;animation:wisp 4.4s ease-out infinite}
+  .steam.s2{animation-delay:1.5s;animation-duration:5s}
+  .steam.s3{animation-delay:2.8s;animation-duration:3.9s}
+  @keyframes wisp{
+    0%{opacity:0;transform:translateY(0) scale(.7)}
+    25%{opacity:.5}
+    100%{opacity:0;transform:translateY(-60px) scale(1.5)}
+  }
+  .ladle{transform-box:fill-box;transform-origin:20% 90%;animation:ladleBob 7s ease-in-out infinite alternate}
+  @keyframes ladleBob{from{transform:rotate(-1.2deg)}to{transform:rotate(1.4deg)}}
+
+  /* JS-spawned bubbles inside the cauldron svg */
+  .jbubble{fill:#c9ffda;opacity:0;animation:jrise 2s linear forwards}
+  @keyframes jrise{
+    0%{opacity:0;transform:translateY(0)}
+    12%{opacity:.85}
+    82%{opacity:.55}
+    100%{transform:translateY(-46px);opacity:0}
+  }
+  .jbubble.big{fill:#eafff1;animation-name:jriseBig;animation-timing-function:ease-out}
+  @keyframes jriseBig{
+    0%{opacity:0;transform:translateY(0) scale(.5)}
+    18%{opacity:.95}
+    100%{transform:translateY(-28px) scale(1.2);opacity:.9}
+  }
+  .pop-ring{
+    fill:none;stroke:#d9ffe6;stroke-width:2.5;
+    transform-box:fill-box;transform-origin:center;
+    animation:popRing .45s ease-out forwards;
+  }
+  @keyframes popRing{
+    0%{transform:scale(.4);opacity:.95;stroke-width:3}
+    100%{transform:scale(2.4);opacity:0;stroke-width:.5}
+  }
+
+  /* click feedback: ripple + splash droplets */
+  .ripple{
+    position:absolute;width:110px;height:110px;border-radius:50%;
+    border:2px solid rgba(124,242,156,.75);pointer-events:none;z-index:4;
+    box-shadow:0 0 14px rgba(73,224,122,.4), inset 0 0 10px rgba(73,224,122,.25);
+    animation:rippleOut .55s ease-out forwards;
+  }
+  @keyframes rippleOut{
+    0%{transform:translate(-50%,-50%) scale(.12);opacity:1}
+    100%{transform:translate(-50%,-50%) scale(1);opacity:0}
+  }
+  .droplet{
+    position:absolute;width:7px;height:7px;pointer-events:none;z-index:4;
+    border-radius:60% 60% 60% 10%;
+    background:linear-gradient(160deg,#c9ffda,#49e07a 70%,#2fae5d);
+    box-shadow:0 0 6px rgba(124,242,156,.7);
+    animation:splash .6s ease-in forwards;
+  }
+  @keyframes splash{
+    0%{transform:translate(-50%,-50%) scale(1) rotate(0deg);opacity:1}
+    55%{transform:translate(calc(-50% + var(--dx,0px)*.7), calc(-50% - var(--up,30px))) scale(.9) rotate(140deg);opacity:1}
+    100%{transform:translate(calc(-50% + var(--dx,0px)), calc(-50% + var(--down,26px))) scale(.5) rotate(260deg);opacity:0}
+  }
+
+  /* floating +N numbers, now with arcs and fancier type */
+  .float-num{
+    position:absolute;pointer-events:none;font-weight:700;font-size:21px;z-index:5;
+    font-family:Georgia,serif;font-style:italic;white-space:nowrap;
+    color:#b9ffce;
+    text-shadow:0 0 12px rgba(73,224,122,.85),0 0 3px rgba(243,201,105,.6),0 2px 3px #000;
+    animation:floatUp 1.1s ease-out forwards;
+  }
+  @keyframes floatUp{
+    0%{transform:translate(-50%,0) scale(.7) rotate(0deg);opacity:0}
+    12%{opacity:1}
+    100%{transform:translate(calc(-50% + var(--fx,0px)),-112px) scale(1.3) rotate(var(--rot,0deg));opacity:0}
+  }
+
+  .click-info{text-align:center;color:var(--muted);font-size:13px;margin-bottom:12px;font-style:italic}
+  .click-info b{color:var(--gold);font-style:normal}
+
+  .save-row{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+  .btn{
+    background:linear-gradient(180deg,#4a3b28,#2d2316 80%,#241b10);
+    color:#f0e4c8;
+    border:1px solid #7a6243;border-radius:8px;padding:8px 16px;
+    font-size:13px;cursor:pointer;letter-spacing:.5px;
+    box-shadow:inset 0 1px 0 rgba(255,230,180,.15), 0 2px 5px rgba(0,0,0,.4);
+    transition:all .15s ease;
+  }
+  .btn:hover{
+    border-color:var(--candle);color:#fff;transform:translateY(-1px);
+    box-shadow:0 0 14px rgba(255,180,94,.3), inset 0 1px 0 rgba(255,230,180,.2);
+  }
+  .btn.danger{border-color:rgba(255,125,125,.45)}
+  .btn.danger:hover{border-color:var(--red);box-shadow:0 0 12px rgba(255,125,125,.3)}
+  .save-note{text-align:center;color:var(--muted);font-size:11px;margin-top:8px;min-height:14px;font-style:italic}
+
+  /* ---------- TABS (middle) ---------- */
+  .tabs{display:flex;gap:6px;margin-bottom:12px}
+  .tab-btn{
+    flex:1;padding:8px 4px;background:rgba(255,235,200,.04);border:1px solid var(--panel-border);
+    border-radius:8px;color:var(--muted);cursor:pointer;font-size:13px;letter-spacing:1px;
+    text-transform:uppercase;font-family:Georgia,serif;transition:all .15s ease;
+  }
+  .tab-btn:hover{color:var(--text);border-color:var(--candle);box-shadow:0 0 10px rgba(255,180,94,.15)}
+  .tab-btn.active{
+    background:linear-gradient(180deg,rgba(243,201,105,.22),rgba(243,201,105,.06));
+    color:var(--gold);border-color:rgba(243,201,105,.55);
+    box-shadow:inset 0 1px 0 rgba(255,235,180,.2), 0 0 12px rgba(243,201,105,.12);
+    text-shadow:0 0 10px rgba(243,201,105,.4);
+  }
+  .tab-page{display:none}
+  .tab-page.active{display:block}
+
+  /* ---------- monogram badges ---------- */
+  .upgrade .icon, .building .icon{
+    position:relative;flex-shrink:0;overflow:hidden;border-radius:8px;
+    display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(160deg,#3a2f52,#241a3c);
+    border:1px solid #6b5a8a;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.14), inset 0 -5px 10px rgba(0,0,0,.45), 0 2px 4px rgba(0,0,0,.4);
+  }
+  .upgrade .icon{width:40px;height:34px}
+  .building .icon{width:46px;height:40px}
+  .icon svg.vig{position:absolute;inset:0;width:100%;height:100%}
+  .icon .mono{
+    position:relative;z-index:1;
+    font-family:Georgia,serif;font-weight:700;font-size:12px;
+    letter-spacing:1.5px;text-indent:1.5px;
+    color:#f0e6ff;text-shadow:0 1px 2px #000,0 0 8px rgba(180,140,255,.6);
+    background:rgba(10,6,20,.5);border:1px solid rgba(255,255,255,.14);
+    border-radius:4px;padding:1px 4px;
+  }
+  .building .icon .mono{font-size:12.5px}
+
+  /* upgrades */
+  .upgrade{
+    display:flex;gap:12px;align-items:center;padding:10px;border-radius:10px;margin-bottom:8px;
+    background:linear-gradient(170deg,rgba(255,235,200,.05),rgba(255,235,200,.02));
+    border:1px solid var(--panel-border);
+    box-shadow:inset 0 1px 0 rgba(255,235,200,.05);
+    cursor:pointer;transition:border-color .15s ease, transform .15s ease;
+  }
+  .upgrade:hover{
+    border-color:var(--candle);transform:translateX(2px);
+    animation:candleGlow 1.1s ease-in-out infinite alternate;
+  }
+  @keyframes candleGlow{
+    from{box-shadow:0 0 12px rgba(255,180,94,.18), inset 0 0 12px rgba(255,180,94,.05)}
+    to{box-shadow:0 0 20px rgba(255,180,94,.3), inset 0 0 16px rgba(255,180,94,.09)}
+  }
+  .upgrade.locked{opacity:.45;cursor:not-allowed}
+  .upgrade.locked:hover{transform:none;animation:none;border-color:var(--panel-border)}
+  .upgrade .u-name{font-weight:600;font-size:14px;color:var(--gold);font-family:Georgia,serif}
+  .upgrade .u-desc{font-size:12px;color:var(--muted);margin-top:1px}
+  .upgrade .u-cost{margin-left:auto;font-weight:700;font-size:13px;color:var(--green);white-space:nowrap;padding-left:8px;font-variant-numeric:tabular-nums}
+  .upgrade.locked .u-cost{color:var(--red)}
+  .empty-note{color:var(--muted);font-size:13px;font-style:italic;text-align:center;padding:16px 4px}
+
+  /* achievements */
+  .ach-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+  .ach{
+    padding:10px;border-radius:10px;
+    background:linear-gradient(170deg,rgba(255,235,200,.05),rgba(255,235,200,.02));
+    border:1px solid var(--panel-border);text-align:center;transition:all .2s;
+  }
+  .ach .a-icon{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:38px;height:28px;margin:0 auto;border-radius:7px;
+    background:linear-gradient(160deg,#3a2f52,#241a3c);
+    border:1px solid #6b5a8a;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.12), inset 0 -4px 8px rgba(0,0,0,.4);
+  }
+  .ach .a-icon span{
+    font-family:Georgia,serif;font-size:11px;font-weight:700;letter-spacing:1.5px;text-indent:1.5px;
+    color:#e8d9ff;text-shadow:0 1px 2px #000;
+  }
+  .ach.unlocked .a-icon{
+    background:radial-gradient(circle at 35% 30%, #ffe9b0, #d8a23c 60%, #9c702a);
+    border-color:#f3c969;
+    box-shadow:0 0 12px rgba(243,201,105,.4), inset 0 1px 0 rgba(255,255,255,.4), inset 0 -4px 8px rgba(120,80,20,.5);
+  }
+  .ach.unlocked .a-icon span{color:#3a2708;text-shadow:0 1px 0 rgba(255,240,200,.6)}
+  .ach .a-name{font-size:12px;font-weight:600;margin-top:4px;font-family:Georgia,serif}
+  .ach .a-desc{font-size:10.5px;color:var(--muted);margin-top:2px}
+  .ach.unlocked{
+    border-color:rgba(243,201,105,.6);
+    background:linear-gradient(180deg,rgba(243,201,105,.15),rgba(243,201,105,.04));
+    box-shadow:0 0 14px rgba(243,201,105,.1);
+  }
+  .ach.unlocked .a-name{color:var(--gold)}
+  .ach.locked{opacity:.4;filter:grayscale(.8)}
+
+  /* stats */
+  .stats-list{list-style:none}
+  .stats-list li{
+    display:flex;justify-content:space-between;padding:8px 4px;font-size:14px;
+    border-bottom:1px dashed rgba(243,201,105,.14);
+  }
+  .stats-list li span:first-child{color:var(--muted)}
+  .stats-list li span:last-child{color:var(--green);font-weight:600;font-variant-numeric:tabular-nums}
+
+  /* ---------- RIGHT: store ---------- */
+  .buy-toggle{display:flex;gap:4px}
+  .buy-toggle button{
+    padding:4px 12px;font-size:12px;border-radius:6px;cursor:pointer;
+    background:rgba(255,235,200,.05);border:1px solid var(--panel-border);color:var(--muted);
+    transition:all .15s;
+  }
+  .buy-toggle button:hover{color:var(--text);border-color:var(--candle)}
+  .buy-toggle button.active{
+    background:linear-gradient(180deg,rgba(243,201,105,.3),rgba(243,201,105,.12));
+    color:#fff3cf;border-color:var(--gold);
+    box-shadow:0 0 8px rgba(243,201,105,.2);
+  }
+
+  .building{
+    display:flex;align-items:center;gap:12px;padding:10px 12px;margin-bottom:8px;
+    border-radius:10px;
+    background:linear-gradient(170deg,rgba(255,235,200,.05),rgba(255,235,200,.02));
+    border:1px solid var(--panel-border);
+    box-shadow:inset 0 1px 0 rgba(255,235,200,.05);
+    cursor:pointer;transition:border-color .15s ease, transform .15s ease;position:relative;overflow:hidden;
+  }
+  .building::after{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:linear-gradient(90deg,transparent,rgba(255,180,94,.08));opacity:0;transition:opacity .15s;
+  }
+  .building.afford:hover{
+    border-color:var(--candle);transform:translateX(3px);
+    animation:candleGlow 1.1s ease-in-out infinite alternate;
+  }
+  .building.afford:hover::after{opacity:1}
+  .building.cant{opacity:.55;cursor:not-allowed}
+  .building .b-name{font-weight:600;font-size:15px;font-family:Georgia,serif}
+  .building .b-prod{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .building .b-prod b{color:var(--purple)}
+  .building .b-right{margin-left:auto;text-align:right;white-space:nowrap;padding-left:8px}
+  .building .b-cost{font-weight:700;font-size:14px;color:var(--green);font-variant-numeric:tabular-nums}
+  .building.cant .b-cost{color:var(--red)}
+  .building .b-owned{font-size:20px;font-weight:700;color:rgba(255,235,200,.22);margin-top:0px;font-family:Georgia,serif}
+  .building.hidden-tier{display:none}
+
+  /* ---------- wax-seal toasts ---------- */
+  #toasts{position:fixed;bottom:18px;right:18px;z-index:60;display:flex;flex-direction:column;gap:8px}
+  .toast{
+    display:flex;gap:12px;align-items:center;
+    background:
+      radial-gradient(120% 140% at 85% -20%, rgba(255,255,240,.5), transparent 50%),
+      repeating-linear-gradient(0deg, rgba(120,90,40,.05) 0 1px, transparent 1px 3px),
+      linear-gradient(170deg,#f0e3c0,#dcc897 70%,#cdb67f);
+    border:1px solid #8a6f3e;color:var(--ink);
+    border-radius:4px 14px 14px 4px;padding:10px 16px 10px 10px;min-width:250px;max-width:330px;
+    box-shadow:0 10px 24px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,250,230,.6), inset 0 -2px 6px rgba(120,90,40,.25);
+    animation:toastIn .35s cubic-bezier(.2,1.4,.4,1) forwards;
+  }
+  .toast.out{animation:toastOut .4s ease forwards}
+  .t-seal{
+    width:46px;height:46px;border-radius:50%;flex-shrink:0;position:relative;
+    display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(circle at 35% 28%, #e06a60, #a01f24 55%, #6e1014 88%);
+    box-shadow:inset 0 2px 5px rgba(255,200,180,.4), inset 0 -4px 7px rgba(60,0,0,.65), 0 3px 7px rgba(0,0,0,.4);
+    animation:stamp .5s cubic-bezier(.34,1.56,.5,1) .12s backwards;
+  }
+  .t-seal::before{
+    content:"";position:absolute;inset:5px;border-radius:50%;
+    border:1px dashed rgba(255,215,195,.45);
+  }
+  .t-seal span{
+    font-family:Georgia,serif;font-weight:700;font-size:13px;letter-spacing:1px;text-indent:1px;
+    color:#ffd9c2;text-shadow:0 -1px 1px #5e0d10, 0 1px 1px rgba(255,180,160,.3);
+  }
+  @keyframes stamp{
+    0%{transform:scale(2.2) rotate(-16deg);opacity:0}
+    55%{transform:scale(.9) rotate(3deg);opacity:1}
+    100%{transform:scale(1) rotate(0deg)}
+  }
+  .toast .t-title{color:#7a1b1e;font-weight:700;font-size:13px;letter-spacing:1px;font-family:Georgia,serif;text-transform:uppercase}
+  .toast .t-body{font-size:13px;margin-top:3px;color:var(--ink);font-weight:600}
+  .toast .t-desc{font-size:11.5px;color:#5c4a2a;margin-top:2px;font-style:italic}
+  @keyframes toastIn{from{transform:translateX(120%);opacity:0}to{transform:none;opacity:1}}
+  @keyframes toastOut{to{transform:translateX(120%);opacity:0}}
+
+  /* ---------- modal ---------- */
+  .modal-wrap{
+    position:fixed;inset:0;background:rgba(5,3,14,.75);backdrop-filter:blur(4px);
+    display:none;align-items:center;justify-content:center;z-index:80;padding:20px;
+  }
+  .modal-wrap.show{display:flex}
+  .modal{
+    position:relative;overflow:hidden;
+    background:
+      radial-gradient(120% 90% at 50% -10%, rgba(255,190,110,.08), transparent 55%),
+      linear-gradient(170deg,#2d231a,#1b140d);
+    border:1px solid rgba(243,201,105,.45);
+    border-radius:16px;padding:28px 32px;max-width:420px;text-align:center;
+    box-shadow:0 0 44px rgba(243,201,105,.18), 0 20px 50px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,230,180,.1);
+    animation:toastIn .35s cubic-bezier(.2,1.4,.4,1);
+  }
+  .modal>*{position:relative;z-index:1}
+  .modal h3{color:var(--gold);font-variant:small-caps;letter-spacing:2px;font-size:22px;margin-bottom:10px;font-family:Georgia,serif}
+  .modal p{font-size:14px;color:var(--text);margin-bottom:6px}
+  .modal .gain{font-size:26px;font-weight:700;color:var(--green);text-shadow:0 0 14px rgba(73,224,122,.5);margin:10px 0;font-family:Georgia,serif}
+  .modal .btn{margin-top:14px}
+
+  /* ---------- cosmic treatment: essence & transcendence ---------- */
+  #tab-essence{
+    position:relative;border-radius:10px;padding:12px;
+    background:radial-gradient(130% 100% at 50% 0%, #2a1850, #170c32 55%, #0d0722);
+    border:1px solid rgba(180,140,255,.3);
+    box-shadow:inset 0 0 40px rgba(60,20,120,.4);
+  }
+  .cosmos{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:0;border-radius:inherit}
+  .cosmos::before{
+    content:"";position:absolute;inset:0;
+    background-image:
+      radial-gradient(1.5px 1.5px at 12% 18%, #fff, transparent),
+      radial-gradient(1px 1px at 32% 64%, #d8c4ff, transparent),
+      radial-gradient(2px 2px at 54% 28%, #fff, transparent),
+      radial-gradient(1px 1px at 70% 76%, #c4f2ff, transparent),
+      radial-gradient(1.5px 1.5px at 85% 40%, #ffe9b0, transparent),
+      radial-gradient(1px 1px at 22% 85%, #fff, transparent),
+      radial-gradient(1px 1px at 92% 12%, #e2d4ff, transparent),
+      radial-gradient(1.5px 1.5px at 44% 48%, #d4b8ff, transparent),
+      radial-gradient(1px 1px at 63% 8%, #fff, transparent);
+    animation:twinkle 4.5s ease-in-out infinite alternate;
+  }
+  .cosmos::after{
+    content:"";position:absolute;left:50%;top:50%;width:480px;height:480px;
+    margin:-240px 0 0 -240px;border-radius:50%;
+    background:conic-gradient(from 0deg,
+      transparent, rgba(180,140,255,.22) 14%, transparent 32%,
+      rgba(124,242,156,.09) 50%, transparent 64%,
+      rgba(243,201,105,.12) 80%, transparent);
+    filter:blur(14px);opacity:.85;
+    animation:swirl 26s linear infinite;
+  }
+  @keyframes swirl{to{transform:rotate(360deg)}}
+  @keyframes twinkle{from{opacity:.35}to{opacity:1}}
+  #tab-essence>*{position:relative;z-index:1}
+  #tab-essence .stats-list li{border-bottom-color:rgba(180,140,255,.2)}
+  #tab-essence .upgrade{background:linear-gradient(170deg,rgba(180,140,255,.08),rgba(180,140,255,.02));border-color:rgba(180,140,255,.3)}
+  #tab-essence .upgrade:hover{border-color:var(--purple);animation:none;box-shadow:0 0 16px rgba(180,140,255,.25)}
+  #tab-essence .upgrade.locked:hover{border-color:rgba(180,140,255,.3);box-shadow:none}
+
+  .modal.cosmic{
+    background:radial-gradient(130% 100% at 50% -10%, #2d1a56, #150b30 55%, #0b0620);
+    border-color:rgba(180,140,255,.55);
+    box-shadow:0 0 50px rgba(138,99,255,.35), 0 20px 50px rgba(0,0,0,.6);
+  }
+
+  /* ---------- transcendence ---------- */
+  .trans-row{display:flex;justify-content:center;margin-top:10px}
+  .btn.trans{
+    border-color:rgba(243,201,105,.55);color:var(--gold);
+    background:linear-gradient(180deg,#4a3a12,#2e2208);
+    box-shadow:0 0 14px rgba(243,201,105,.25);
+  }
+  .btn.trans:hover{border-color:var(--gold);box-shadow:0 0 22px rgba(243,201,105,.5)}
+  .btn.trans.ready{animation:pulse 2.2s ease-in-out infinite}
+  .btn.trans:disabled{opacity:.45;cursor:not-allowed;animation:none;transform:none;box-shadow:none}
+  .ess-note{color:var(--muted);font-size:12px;text-align:center;margin:8px 0 2px;font-style:italic}
+  .upgrade.perk .u-cost{color:var(--purple)}
+  .upgrade.perk.owned{border-color:rgba(243,201,105,.55);cursor:default;
+    background:linear-gradient(180deg,rgba(243,201,105,.12),rgba(243,201,105,.03))}
+  .upgrade.perk.owned:hover{transform:none;box-shadow:none;animation:none}
+  .upgrade.perk.owned .u-cost{color:var(--gold);font-size:11px;letter-spacing:1px}
+  #transFlash{position:fixed;inset:0;pointer-events:none;z-index:95;opacity:0;
+    background:radial-gradient(circle at 50% 45%, rgba(243,201,105,.95), rgba(180,140,255,.55) 40%, transparent 75%);}
+  #transFlash.go{animation:transFlash 1.4s ease-out forwards}
+  @keyframes transFlash{0%{opacity:0}12%{opacity:1}100%{opacity:0}}
+  .ess-particle{position:fixed;left:50%;top:45%;width:9px;height:9px;border-radius:50%;
+    pointer-events:none;z-index:96;
+    animation:essBurst 1.3s cubic-bezier(.1,.8,.3,1) forwards;}
+  @keyframes essBurst{
+    0%{transform:translate(-50%,-50%) scale(1);opacity:1}
+    100%{transform:translate(calc(-50% + var(--dx)),calc(-50% + var(--dy))) scale(.15);opacity:0}
+  }
+
+  ::-webkit-scrollbar{width:9px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:rgba(169,139,63,.4);border-radius:5px}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(243,201,105,.45)}
+  .scroll{max-height:560px;overflow-y:auto;padding-right:4px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Potion Brewery</h1>
+  <p>Stir the cauldron. Brew the impossible.</p>
+  <svg class="flourish" width="220" height="12" viewBox="0 0 220 12" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="M4 6 H92" stroke="#a98b3f" stroke-width="1" opacity=".7"/>
+    <path d="M128 6 H216" stroke="#a98b3f" stroke-width="1" opacity=".7"/>
+    <path d="M110 1 L115 6 L110 11 L105 6 Z" fill="#f3c969" opacity=".9"/>
+    <circle cx="97" cy="6" r="1.6" fill="#a98b3f"/>
+    <circle cx="123" cy="6" r="1.6" fill="#a98b3f"/>
+  </svg>
+</header>
+
+<div class="layout">
+
+  <!-- LEFT -->
+  <section class="panel col-left">
+    <div class="counter">
+      <div class="big"><span id="potionCount">0</span> potions</div>
+      <div class="sub">per second: <b id="ppsDisplay">0</b></div>
+    </div>
+
+    <div class="cauldron-zone" id="cauldronZone">
+      <!-- ambient workshop scene (decorative) -->
+      <svg class="scene-svg" viewBox="0 0 360 300" preserveAspectRatio="xMidYMax slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="skyG" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#101d3a"/>
+            <stop offset="100%" stop-color="#0a0f22"/>
+          </linearGradient>
+          <linearGradient id="beamG" x1="0" y1="0" x2="0.45" y2="1">
+            <stop offset="0%" stop-color="#bcd2ff" stop-opacity=".3"/>
+            <stop offset="100%" stop-color="#bcd2ff" stop-opacity="0"/>
+          </linearGradient>
+          <linearGradient id="plankG" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#5a4226"/>
+            <stop offset="100%" stop-color="#32220f"/>
+          </linearGradient>
+        </defs>
+
+        <!-- arched window with night sky and drifting moon -->
+        <g transform="translate(22,16)">
+          <path d="M-5 108 L-5 40 Q-5 -6 40 -6 Q85 -6 85 40 L85 108 Z" fill="#241a10" stroke="#4a3620" stroke-width="3"/>
+          <path d="M3 102 L3 40 Q3 2 40 2 Q77 2 77 40 L77 102 Z" fill="url(#skyG)"/>
+          <circle cx="58" cy="70" r="1.2" fill="#fff" opacity=".8"/>
+          <circle cx="18" cy="56" r="1" fill="#fff" opacity=".6"/>
+          <circle cx="47" cy="22" r="1" fill="#fff" opacity=".7"/>
+          <g class="moon">
+            <circle cx="30" cy="36" r="13" fill="#eef3ff" opacity=".18"/>
+            <circle cx="30" cy="36" r="10" fill="#e9f0ff"/>
+            <circle cx="27" cy="33" r="2" fill="#c8d4ee"/>
+            <circle cx="33" cy="39" r="1.5" fill="#c8d4ee"/>
+          </g>
+          <path d="M40 2 L40 102" stroke="#4a3620" stroke-width="3"/>
+          <path d="M3 54 L77 54" stroke="#4a3620" stroke-width="3"/>
+        </g>
+
+        <!-- moonbeam light shaft -->
+        <polygon class="beam" points="44,80 104,88 250,300 70,300" fill="url(#beamG)"/>
+
+        <!-- hanging herb bundles -->
+        <g class="herb h1" transform="translate(150,0)">
+          <rect x="-2" y="0" width="4" height="6" fill="#6a5436"/>
+          <path d="M0 4 L-7 34 M0 4 L1 38 M0 4 L8 32" stroke="#4c6b3a" stroke-width="2" fill="none"/>
+          <ellipse cx="-7" cy="33" rx="4" ry="7" fill="#5d8a46" transform="rotate(14 -7 33)"/>
+          <ellipse cx="1" cy="37" rx="4" ry="8" fill="#527a3e"/>
+          <ellipse cx="8" cy="31" rx="3.6" ry="6.5" fill="#679850" transform="rotate(-16 8 31)"/>
+        </g>
+        <g class="herb h2" transform="translate(190,0)">
+          <rect x="-2" y="0" width="4" height="5" fill="#6a5436"/>
+          <path d="M0 3 L-5 26 M0 3 L4 28" stroke="#5c6b36" stroke-width="2" fill="none"/>
+          <ellipse cx="-5" cy="25" rx="3.4" ry="6" fill="#7a9148" transform="rotate(12 -5 25)"/>
+          <ellipse cx="4" cy="27" rx="3.4" ry="6.4" fill="#6d8440" transform="rotate(-12 4 27)"/>
+        </g>
+
+        <!-- shelf of potion bottles -->
+        <g transform="translate(222,66)">
+          <rect x="0" y="34" width="126" height="8" rx="2" fill="url(#plankG)" stroke="#241808" stroke-width="1.5"/>
+          <path d="M10 42 L10 56 L24 42 Z" fill="#32220f"/>
+          <path d="M104 42 L104 56 L118 42 Z" fill="#32220f"/>
+          <!-- round flask, violet -->
+          <g>
+            <rect x="11.5" y="8" width="5" height="10" fill="#5e37a6"/>
+            <rect x="10.5" y="4" width="7" height="5" rx="1.5" fill="#a97c4f"/>
+            <circle cx="14" cy="25" r="9.5" fill="#8450e0" opacity=".92"/>
+            <circle cx="14" cy="27" r="6.5" fill="#6a3fc0"/>
+            <rect class="glint g1" x="9" y="18" width="3" height="8" rx="1.5" fill="#fff"/>
+          </g>
+          <!-- tall vial, green -->
+          <g>
+            <rect x="32" y="9" width="11" height="25" rx="4" fill="#3fae6a" opacity=".92"/>
+            <rect x="34" y="20" width="7" height="12" rx="3" fill="#2d8a50"/>
+            <rect x="34.5" y="4" width="6" height="6" rx="1.5" fill="#a97c4f"/>
+            <rect class="glint g2" x="34" y="12" width="2.5" height="10" rx="1.2" fill="#fff"/>
+          </g>
+          <!-- squat jar, amber -->
+          <g>
+            <rect x="52" y="17" width="17" height="17" rx="5" fill="#d8a23c" opacity=".92"/>
+            <rect x="54" y="25" width="13" height="7" rx="3" fill="#b07f24"/>
+            <rect x="55" y="12" width="11" height="6" rx="2" fill="#6a4e2a"/>
+            <rect class="glint g3" x="55" y="20" width="3" height="8" rx="1.5" fill="#fff"/>
+          </g>
+          <!-- conical flask, blue -->
+          <g>
+            <path d="M80 34 L96 34 L92 14 L84 14 Z" fill="#4a8de0" opacity=".92"/>
+            <path d="M82 28 L94 28 L96 34 L80 34 Z" fill="#3a6fb8"/>
+            <rect x="85" y="9" width="6" height="6" rx="1.5" fill="#a97c4f"/>
+            <rect class="glint g4" x="84" y="18" width="2.5" height="9" rx="1.2" fill="#fff"/>
+          </g>
+          <!-- tiny round bottle, rose -->
+          <g>
+            <circle cx="110" cy="27" r="7" fill="#e05a7a" opacity=".92"/>
+            <circle cx="110" cy="29" r="4.5" fill="#b83e5c"/>
+            <rect x="108" y="15" width="4" height="7" fill="#99304a"/>
+            <rect x="107" y="12" width="6" height="4" rx="1.5" fill="#a97c4f"/>
+            <rect class="glint g5" x="106.5" y="22" width="2.5" height="6" rx="1.2" fill="#fff"/>
+          </g>
+        </g>
+      </svg>
+
+      <!-- the cauldron on its hearth -->
+      <button id="cauldron" aria-label="Brew a potion">
+        <svg viewBox="0 0 200 250" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <radialGradient id="glowG" cx="50%" cy="40%" r="60%">
+              <stop offset="0%" stop-color="#7cf29c" stop-opacity=".85"/>
+              <stop offset="100%" stop-color="#1d7a3f" stop-opacity="0"/>
+            </radialGradient>
+            <radialGradient id="fireGlowG" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="#ffb45e" stop-opacity=".85"/>
+              <stop offset="100%" stop-color="#ff8a3c" stop-opacity="0"/>
+            </radialGradient>
+            <linearGradient id="potG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#524866"/>
+              <stop offset="45%" stop-color="#2b2537"/>
+              <stop offset="100%" stop-color="#15111d"/>
+            </linearGradient>
+            <linearGradient id="liqG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#9bffb4"/>
+              <stop offset="100%" stop-color="#2fae5d"/>
+            </linearGradient>
+            <linearGradient id="flameG" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0%" stop-color="#d94f1e"/>
+              <stop offset="55%" stop-color="#ff8a3c"/>
+              <stop offset="100%" stop-color="#ffdf8a"/>
+            </linearGradient>
+            <radialGradient id="stoneG" cx="40%" cy="30%" r="80%">
+              <stop offset="0%" stop-color="#5e5668"/>
+              <stop offset="100%" stop-color="#2a2532"/>
+            </radialGradient>
+            <filter id="steamBlur" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="2.6"/>
+            </filter>
+          </defs>
+
+          <!-- aura -->
+          <ellipse class="brew-glow" cx="100" cy="100" rx="78" ry="40" fill="url(#glowG)"/>
+
+          <!-- back hearth stones -->
+          <ellipse cx="36" cy="214" rx="17" ry="10" fill="url(#stoneG)" stroke="#1b1622" stroke-width="1.5"/>
+          <ellipse cx="164" cy="214" rx="17" ry="10" fill="url(#stoneG)" stroke="#1b1622" stroke-width="1.5"/>
+
+          <!-- fire -->
+          <ellipse class="fire-glow" cx="100" cy="204" rx="48" ry="17" fill="url(#fireGlowG)"/>
+          <path class="flame f1" d="M84 212 Q78 198 87 185 Q90 196 95 199 Q93 190 99 183 Q103 198 96 212 Z" fill="url(#flameG)"/>
+          <path class="flame f2" d="M97 213 Q92 195 102 178 Q104 191 110 195 Q110 185 114 181 Q120 199 110 213 Z" fill="url(#flameG)"/>
+          <path class="flame f3" d="M112 212 Q110 200 119 191 Q120 200 125 203 Q127 196 129 193 Q133 204 125 212 Z" fill="url(#flameG)"/>
+          <circle class="ember-dot" cx="94" cy="202" r="1.6" fill="#ffdf8a"/>
+          <circle class="ember-dot e2" cx="109" cy="205" r="1.3" fill="#ffb45e"/>
+
+          <!-- legs -->
+          <path d="M55 184 L45 204 L58 204 L66 188 Z" fill="#15111d"/>
+          <path d="M145 184 L155 204 L142 204 L134 188 Z" fill="#15111d"/>
+          <path d="M96 190 L96 206 L108 206 L108 190 Z" fill="#15111d"/>
+
+          <!-- front hearth stones -->
+          <ellipse cx="50" cy="227" rx="21" ry="11" fill="url(#stoneG)" stroke="#1b1622" stroke-width="1.5"/>
+          <ellipse cx="88" cy="231" rx="19" ry="10" fill="url(#stoneG)" stroke="#1b1622" stroke-width="1.5"/>
+          <ellipse cx="124" cy="228" rx="18" ry="10" fill="url(#stoneG)" stroke="#1b1622" stroke-width="1.5"/>
+          <ellipse cx="155" cy="224" rx="15" ry="9" fill="url(#stoneG)" stroke="#1b1622" stroke-width="1.5"/>
+          <ellipse cx="70" cy="221" rx="10" ry="6" fill="url(#stoneG)" stroke="#1b1622" stroke-width="1"/>
+
+          <!-- cauldron body -->
+          <path d="M30 102 Q30 190 100 192 Q170 190 170 102 Q148 116 100 116 Q52 116 30 102 Z" fill="url(#potG)" stroke="#5c5370" stroke-width="2"/>
+          <!-- warm firelight on the belly -->
+          <path d="M52 170 Q75 188 100 189 Q128 188 150 168 Q130 184 100 184 Q70 184 52 170 Z" fill="#ff8a3c" opacity=".2"/>
+          <!-- shine -->
+          <path d="M48 132 Q46 160 72 176" fill="none" stroke="rgba(255,255,255,.14)" stroke-width="6" stroke-linecap="round"/>
+          <!-- rim -->
+          <ellipse cx="100" cy="102" rx="72" ry="18" fill="#201a2e" stroke="#6b6080" stroke-width="3"/>
+          <!-- liquid -->
+          <ellipse cx="100" cy="102" rx="62" ry="13" fill="url(#liqG)"/>
+          <!-- drifting highlight on the surface -->
+          <ellipse class="liq-hi" cx="78" cy="100" rx="18" ry="3.6" fill="#ffffff" opacity=".24"/>
+          <!-- JS bubble layer -->
+          <g id="bubbleLayer"></g>
+          <!-- steam wisps -->
+          <ellipse class="steam"    cx="80"  cy="92" rx="7"  ry="15" fill="#dfe9ff" filter="url(#steamBlur)"/>
+          <ellipse class="steam s2" cx="104" cy="90" rx="8"  ry="17" fill="#e6eeff" filter="url(#steamBlur)"/>
+          <ellipse class="steam s3" cx="126" cy="93" rx="6"  ry="13" fill="#d8e4ff" filter="url(#steamBlur)"/>
+          <!-- ladle resting on the rim -->
+          <g class="ladle">
+            <path d="M146 98 L184 52" stroke="#8a7458" stroke-width="4.5" stroke-linecap="round"/>
+            <path d="M146 98 L184 52" stroke="#bfa27a" stroke-width="1.5" stroke-linecap="round" opacity=".6"/>
+            <circle cx="186" cy="50" r="3.4" fill="#8a7458"/>
+            <ellipse cx="142" cy="100" rx="11" ry="5.5" fill="#2b2537" stroke="#6b6080" stroke-width="2"/>
+            <ellipse cx="142" cy="99" rx="7.5" ry="3" fill="#49e07a" opacity=".85"/>
+          </g>
+          <!-- handles -->
+          <circle cx="28" cy="108" r="7" fill="none" stroke="#6b6080" stroke-width="4"/>
+          <circle cx="172" cy="108" r="7" fill="none" stroke="#6b6080" stroke-width="4"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="click-info">each stir brews <b id="clickPowerDisplay">1</b> potion(s)</div>
+
+    <div class="save-row">
+      <button class="btn" id="saveBtn">Save</button>
+      <button class="btn danger" id="resetBtn">Reset</button>
+    </div>
+    <div class="save-note" id="saveNote">autosaves every 10 seconds</div>
+    <div class="trans-row"><button class="btn trans ready" id="transcendBtn" style="display:none"></button></div>
+  </section>
+
+  <!-- MIDDLE -->
+  <section class="panel">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="upgrades">Upgrades</button>
+      <button class="tab-btn" data-tab="achievements">Feats</button>
+      <button class="tab-btn" data-tab="essence">Essence</button>
+      <button class="tab-btn" data-tab="stats">Stats</button>
+    </div>
+
+    <div class="tab-page active scroll" id="tab-upgrades"></div>
+
+    <div class="tab-page scroll" id="tab-achievements">
+      <div class="ach-grid" id="achGrid"></div>
+    </div>
+
+    <div class="tab-page scroll" id="tab-essence">
+      <div class="cosmos" aria-hidden="true"></div>
+      <ul class="stats-list" style="margin-bottom:10px">
+        <li><span>Essence held</span><span id="essBalance">0</span></li>
+        <li><span>Production bonus</span><span id="essBonus">+0%</span></li>
+        <li><span>Next Essence at</span><span id="essNext">1B lifetime</span></li>
+      </ul>
+      <button class="btn trans" id="transcendBtn2" style="width:100%">Transcend</button>
+      <p class="ess-note" id="essHint"></p>
+      <div id="perkList" style="margin-top:10px"></div>
+    </div>
+
+    <div class="tab-page" id="tab-stats">
+      <ul class="stats-list">
+        <li><span>Lifetime potions brewed</span><span id="stTotal">0</span></li>
+        <li><span>This transcension</span><span id="stRun">0</span></li>
+        <li><span>Potions from stirring</span><span id="stClickPotions">0</span></li>
+        <li><span>Cauldron stirs (clicks)</span><span id="stClicks">0</span></li>
+        <li><span>Potions per second</span><span id="stPps">0</span></li>
+        <li><span>Potions per stir</span><span id="stClickPower">0</span></li>
+        <li><span>Buildings owned</span><span id="stBuildings">0</span></li>
+        <li><span>Upgrades brewed</span><span id="stUpgrades">0</span></li>
+        <li><span>Feats unlocked</span><span id="stAch">0</span></li>
+        <li><span>Essence</span><span id="stEssence">0</span></li>
+        <li><span>Essence multiplier</span><span id="stEssMult">x1.0</span></li>
+        <li><span>Transcensions</span><span id="stTrans">0</span></li>
+        <li><span>Playtime</span><span id="stPlaytime">0s</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- RIGHT -->
+  <section class="panel">
+    <h2>
+      Grimoire of Assets
+      <span class="buy-toggle" id="buyToggle">
+        <button data-amt="1" class="active">x1</button>
+        <button data-amt="10">x10</button>
+        <button data-amt="max">Max</button>
+      </span>
+    </h2>
+    <div class="scroll" id="store"></div>
+  </section>
+
+</div>
+
+<div id="toasts"></div>
+
+<div class="modal-wrap" id="awayModal">
+  <div class="modal">
+    <h3>While You Were Away…</h3>
+    <p>Your brewery bubbled on without you for <b id="awayTime"></b>.</p>
+    <div class="gain">+<span id="awayGain"></span> potions</div>
+    <p style="color:var(--muted);font-size:12px" id="awayCap">(offline progress is capped at 8 hours)</p>
+    <button class="btn" id="awayClose">Collect &amp; Brew On</button>
+  </div>
+</div>
+
+<div class="modal-wrap" id="transModal">
+  <div class="modal cosmic">
+    <div class="cosmos" aria-hidden="true"></div>
+    <h3>Transcendence</h3>
+    <p>Dissolve the brewery into pure arcana.</p>
+    <p style="color:var(--muted);font-size:12px">Essence = floor( cbrt( lifetime potions / 1B ) )</p>
+    <p id="transFormula" style="font-size:13px;color:var(--purple)"></p>
+    <div class="gain">+<span id="transGain">0</span> Essence</div>
+    <p style="color:var(--muted);font-size:12px">This resets your potions, buildings and upgrades.<br>Essence, perks, feats and lifetime stats are kept.</p>
+    <button class="btn trans" id="transConfirm">Transcend</button>
+    <button class="btn" id="transCancel">Not Yet</button>
+  </div>
+</div>
+
+<div id="transFlash"></div>
+
+<!-- arcade-shared:start -->
+<script>
+/* Arcade shared runtime.
+   Single source of truth for cross-game boilerplate. build-arcade.py injects
+   this into every game between the arcade-shared markers (and keeps the copies
+   in sync on each run) — edit THIS file, then run: python3 build-arcade.py */
+(function () {
+  "use strict";
+
+  /* ---- safe storage: never throws (Safari private mode, disabled storage) ---- */
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, String(v)); return true; } catch (e) { return false; } },
+    remove: function (k) { try { localStorage.removeItem(k); } catch (e) {} },
+    num: function (k) { var n = parseFloat(store.get(k)); return isFinite(n) ? n : 0; },
+    json: function (k) { try { return JSON.parse(store.get(k)); } catch (e) { return null; } }
+  };
+
+  /* ---- audio: one wrap of the AudioContext constructor gives us both
+     a tab-hidden auto-suspend and an arcade-wide master volume ----
+     Every context's .destination is rerouted through a shared gain node, so
+     the settings panel's master volume applies to every game with no per-game
+     wiring; the games' own volume sliders keep working underneath it.
+     Only contexts *we* suspended are resumed, so a game's own
+     mute-by-suspend behaviour is left alone. */
+  var contexts = [];
+  var autoSuspended = [];
+  var masters = [];
+  function masterLevel() {
+    if (store.get("arcade_master_muted") === "1") return 0;
+    var v = parseFloat(store.get("arcade_master"));
+    return isFinite(v) ? Math.min(Math.max(v, 0), 1) : 1;
+  }
+  function applyMaster() {
+    var lvl = masterLevel();
+    masters.forEach(function (g) {
+      try { g.gain.setTargetAtTime(lvl, g.context.currentTime, 0.02); } catch (e) {}
+    });
+  }
+  ["AudioContext", "webkitAudioContext"].forEach(function (name) {
+    var Orig = window[name];
+    if (!Orig) return;
+    function Patched() {
+      var ctx = arguments.length
+        ? new (Function.prototype.bind.apply(Orig, [null].concat([].slice.call(arguments))))()
+        : new Orig();
+      contexts.push(ctx);
+      try {
+        var realDest = ctx.destination;
+        var master = ctx.createGain();
+        master.gain.value = masterLevel();
+        master.connect(realDest);
+        Object.defineProperty(ctx, "destination", {
+          get: function () { return master; },
+          configurable: true
+        });
+        masters.push(master);
+      } catch (e) { /* master volume is best-effort */ }
+      return ctx;
+    }
+    Patched.prototype = Orig.prototype;
+    window[name] = Patched;
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      contexts.forEach(function (ctx) {
+        if (ctx.state === "running") {
+          autoSuspended.push(ctx);
+          ctx.suspend().catch(function () {});
+        }
+      });
+    } else {
+      autoSuspended.splice(0).forEach(function (ctx) {
+        if (ctx.state === "suspended") ctx.resume().catch(function () {});
+      });
+    }
+  });
+
+  /* ---- reduced motion: tame decorative CSS animation, expose a flag the
+     games consult for canvas effects (shake, flashes, particles). The OS
+     setting is the default; the settings panel can override it either way
+     (arcade_rm: "auto" | "on" | "off"). ---- */
+  var rmQuery = window.matchMedia ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+  function reducedMotion() {
+    var o = store.get("arcade_rm");
+    if (o === "on") return true;
+    if (o === "off") return false;
+    return !!(rmQuery && rmQuery.matches);
+  }
+  var rmStyle = document.createElement("style");
+  (document.head || document.documentElement).appendChild(rmStyle);
+  function syncRMStyle() {
+    rmStyle.textContent = reducedMotion()
+      ? "*,*::before,*::after{animation-duration:.01ms !important;" +
+        "animation-iteration-count:1 !important;transition-duration:.01ms !important;" +
+        "scroll-behavior:auto !important}"
+      : "";
+  }
+  syncRMStyle();
+  if (rmQuery && rmQuery.addEventListener) rmQuery.addEventListener("change", syncRMStyle);
+
+  /* ---- on-screen touch controls ----
+     Created on demand by a game calling arcade.touch.* at the end of its own
+     script. Nothing is shown unless the pointer is coarse (or ?touch=1 forces
+     them for testing). Key buttons synthesize keydown/keyup on window+document
+     with both .key and .code set, so games keep their existing handlers. */
+  var touchOn = (window.matchMedia && matchMedia("(pointer: coarse)").matches) ||
+                /[?&]touch=1\b/.test(location.search);
+  var touchLayer = null;
+  function ensureLayer() {
+    if (!touchLayer) {
+      touchLayer = document.createElement("div");
+      touchLayer.id = "arcade-touch";
+      touchLayer.style.cssText =
+        "position:fixed;inset:0;z-index:15000;pointer-events:none;" +
+        "user-select:none;-webkit-user-select:none";
+      (document.body || document.documentElement).appendChild(touchLayer);
+    }
+    return touchLayer;
+  }
+  function mkEl(style, size) {
+    var el = document.createElement("div");
+    el.style.cssText =
+      "position:absolute;pointer-events:auto;touch-action:none;box-sizing:border-box;" +
+      "width:" + size + "px;height:" + size + "px;border-radius:50%;" +
+      "background:rgba(140,160,210,.13);border:1px solid rgba(140,160,210,.45);" +
+      "color:rgba(232,236,248,.85);display:flex;align-items:center;justify-content:center;" +
+      "font:700 13px/1 system-ui,sans-serif;letter-spacing:1px;" + (style || "");
+    return el;
+  }
+  function sendKey(type, key, code) {
+    var ev = new KeyboardEvent(type, { key: key, code: code, bubbles: true, cancelable: true });
+    window.dispatchEvent(ev);
+    document.dispatchEvent(ev);
+  }
+  function touchButton(o) {
+    if (!touchOn) return null;
+    var el = mkEl(o.style, o.size || 54);
+    el.textContent = o.label || "";
+    if (o.label) el.dataset.k = o.label;
+    var timer = 0;
+    function down(e) {
+      e.preventDefault();
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
+      el.style.background = "rgba(140,160,210,.34)";
+      if (o.onDown) o.onDown();
+      if (o.repeat) timer = setInterval(function () { if (o.onDown) o.onDown(); }, o.repeat);
+    }
+    function up() {
+      el.style.background = "rgba(140,160,210,.13)";
+      if (timer) { clearInterval(timer); timer = 0; }
+      if (o.onUp) o.onUp();
+    }
+    el.addEventListener("pointerdown", down);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+    ensureLayer().appendChild(el);
+    return el;
+  }
+  function keyButton(o) {
+    var held = false;
+    return touchButton({
+      label: o.label, style: o.style, size: o.size, repeat: o.repeat,
+      onDown: function () { held = true; sendKey("keydown", o.key, o.code || o.key); },
+      onUp: function () { if (held) { held = false; sendKey("keyup", o.key, o.code || o.key); } }
+    });
+  }
+  function dpad(o) {
+    if (!touchOn) return;
+    var s = o.size || 52, g = o.gap || 6;
+    var bx = o.left != null ? o.left : 16, by = o.bottom != null ? o.bottom : 16;
+    function at(cx, cy) { return "left:" + cx + "px;bottom:" + cy + "px"; }
+    var m = o.map;
+    keyButton({ label: "▲", key: m.up.key, code: m.up.code, size: s, repeat: o.repeat, style: at(bx + s + g, by + 2 * (s + g)) });
+    keyButton({ label: "◀", key: m.left.key, code: m.left.code, size: s, repeat: o.repeat, style: at(bx, by + s + g) });
+    keyButton({ label: "▶", key: m.right.key, code: m.right.code, size: s, repeat: o.repeat, style: at(bx + 2 * (s + g), by + s + g) });
+    keyButton({ label: "▼", key: m.down.key, code: m.down.code, size: s, repeat: o.repeat, style: at(bx + s + g, by) });
+  }
+  function arrowDpad(o) {
+    o = o || {};
+    o.map = {
+      up: { key: "ArrowUp", code: "ArrowUp" }, down: { key: "ArrowDown", code: "ArrowDown" },
+      left: { key: "ArrowLeft", code: "ArrowLeft" }, right: { key: "ArrowRight", code: "ArrowRight" }
+    };
+    return dpad(o);
+  }
+  function stick(o) {
+    if (!touchOn) return null;
+    var size = o.size || 124;
+    var base = mkEl(o.style, size);
+    if (o.label) base.dataset.k = o.label;
+    var knob = document.createElement("div");
+    knob.style.cssText =
+      "position:absolute;width:44%;height:44%;border-radius:50%;pointer-events:none;" +
+      "background:rgba(140,160,210,.4);left:50%;top:50%;transform:translate(-50%,-50%)";
+    base.appendChild(knob);
+    var active = false;
+    function setKnob(nx, ny) {
+      knob.style.left = (50 + nx * 32) + "%";
+      knob.style.top = (50 + ny * 32) + "%";
+    }
+    function report(e) {
+      var r = base.getBoundingClientRect();
+      var dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+      var dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+      var mag = Math.hypot(dx, dy);
+      if (mag > 1) { dx /= mag; dy /= mag; }
+      setKnob(dx, dy);
+      if (o.onMove) o.onMove(dx, dy, true);
+    }
+    base.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      try { base.setPointerCapture(e.pointerId); } catch (err) {}
+      active = true;
+      report(e);
+    });
+    base.addEventListener("pointermove", function (e) { if (active) report(e); });
+    function end() {
+      if (!active) return;
+      active = false;
+      setKnob(0, 0);
+      if (o.onMove) o.onMove(0, 0, false);
+    }
+    base.addEventListener("pointerup", end);
+    base.addEventListener("pointercancel", end);
+    ensureLayer().appendChild(base);
+    return base;
+  }
+
+  /* ---- play-time heartbeat: the hub sorts and labels cards from this ----
+     Standalone pages identify themselves by filename; inside the all-in-one
+     bundle the overlay stamps data-arcade-game on the iframe. The smoke
+     harness's srcdoc frames carry no stamp, so test runs never pollute it. */
+  var GAME_ID = (function () {
+    try {
+      if (window.frameElement && window.frameElement.dataset.arcadeGame)
+        return window.frameElement.dataset.arcadeGame;
+      if (window.frameElement) return null; /* unstamped frame (smoke harness) */
+    } catch (e) { return null; }
+    var p = location.pathname.split("/").pop();
+    return /\.html$/.test(p) && ["index.html", "arcade.html", "smoke.html"].indexOf(p) === -1 ? p : null;
+  })();
+  if (GAME_ID) {
+    var visSince = document.hidden ? 0 : Date.now();
+    var metaFlush = function () {
+      var add = 0, now = Date.now();
+      if (visSince) { add = (now - visSince) / 1000; visSince = document.hidden ? 0 : now; }
+      else if (add === 0) return; /* hidden and idle: not "playing" */
+      var meta = store.json("arcade_meta_v1") || {};
+      var g = meta[GAME_ID] || (meta[GAME_ID] = { secs: 0 });
+      g.secs = Math.round((g.secs || 0) + add);
+      g.last = now;
+      store.set("arcade_meta_v1", JSON.stringify(meta));
+    };
+    metaFlush();
+    setInterval(metaFlush, 15000);
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { metaFlush(); visSince = 0; }
+      else visSince = Date.now();
+    });
+    window.addEventListener("pagehide", metaFlush);
+  }
+
+  /* ---- settings panel: gear chip on the right edge; Escape closes.
+     Master volume and motion apply to every game through the shared
+     runtime, so this is the same panel with the same behaviour everywhere. */
+  var panel = null, chip = null;
+  function settingsOpen() { return !!(panel && panel.style.display !== "none"); }
+  function motionLabel() {
+    var o = store.get("arcade_rm");
+    return o === "on" ? "MOTION: REDUCED" : o === "off" ? "MOTION: FULL" : "MOTION: AUTO";
+  }
+  function buildPanel() {
+    if (panel) return;
+    panel = document.createElement("div");
+    panel.id = "arcade-settings";
+    panel.style.cssText =
+      "position:fixed;inset:0;z-index:16000;display:none;" +
+      "background:rgba(4,6,12,.55);user-select:none;-webkit-user-select:none";
+    var card = document.createElement("div");
+    card.style.cssText =
+      "position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);" +
+      "min-width:260px;padding:22px 26px;border-radius:14px;" +
+      "background:rgba(14,17,30,.96);border:1px solid rgba(140,160,210,.4);" +
+      "color:#e8ecf8;font:13px/1.5 system-ui,sans-serif";
+    card.innerHTML =
+      '<div style="font:700 13px/1 system-ui;letter-spacing:3px;margin-bottom:16px">ARCADE SETTINGS</div>' +
+      '<label style="font-size:11px;letter-spacing:2px;color:#8b94b0">MASTER VOLUME</label><br>' +
+      '<input id="arc-set-vol" type="range" min="0" max="100" style="width:100%;margin:6px 0 14px">' +
+      '<button id="arc-set-mute" style="' + btnCss() + '"></button> ' +
+      '<button id="arc-set-rm" style="' + btnCss() + '"></button>' +
+      '<div style="font-size:11px;color:#8b94b0;margin-top:14px">Applies to every game. ' +
+      'Per-game volume controls still work underneath.<br>Esc closes.</div>';
+    panel.appendChild(card);
+    panel.addEventListener("pointerdown", function (e) { if (e.target === panel) toggleSettings(false); });
+    (document.body || document.documentElement).appendChild(panel);
+
+    var vol = card.querySelector("#arc-set-vol");
+    var mute = card.querySelector("#arc-set-mute");
+    var rm = card.querySelector("#arc-set-rm");
+    function syncUI() {
+      var v = parseFloat(store.get("arcade_master"));
+      vol.value = Math.round((isFinite(v) ? Math.min(Math.max(v, 0), 1) : 1) * 100);
+      mute.textContent = store.get("arcade_master_muted") === "1" ? "UNMUTE" : "MUTE";
+      rm.textContent = motionLabel();
+    }
+    vol.addEventListener("input", function () {
+      store.set("arcade_master", vol.value / 100);
+      store.set("arcade_master_muted", "0");
+      applyMaster(); syncUI();
+    });
+    mute.addEventListener("click", function () {
+      store.set("arcade_master_muted", store.get("arcade_master_muted") === "1" ? "0" : "1");
+      applyMaster(); syncUI();
+    });
+    rm.addEventListener("click", function () {
+      var o = store.get("arcade_rm");
+      store.set("arcade_rm", o === "on" ? "off" : o === "off" ? "auto" : "on");
+      syncRMStyle(); syncUI();
+    });
+    panel.syncUI = syncUI;
+  }
+  function btnCss() {
+    return "font:700 11px/1 system-ui;letter-spacing:2px;color:#cfd8ea;cursor:pointer;" +
+      "background:rgba(140,160,210,.12);border:1px solid rgba(140,160,210,.4);" +
+      "padding:8px 12px;border-radius:999px";
+  }
+  function toggleSettings(show) {
+    buildPanel();
+    var to = show != null ? show : !settingsOpen();
+    panel.style.display = to ? "block" : "none";
+    if (to) panel.syncUI();
+  }
+  function mountChip() {
+    if (chip || !document.body) return;
+    chip = document.createElement("div");
+    chip.id = "arcade-settings-chip";
+    chip.title = "Arcade settings";
+    chip.textContent = "⚙";
+    chip.style.cssText =
+      "position:fixed;right:8px;top:50%;transform:translateY(-50%);z-index:15990;" +
+      "width:30px;height:30px;border-radius:50%;display:flex;align-items:center;" +
+      "justify-content:center;cursor:pointer;font-size:15px;color:#cfd8ea;" +
+      "background:rgba(10,12,20,.6);border:1px solid rgba(140,160,210,.35);" +
+      "opacity:.4;transition:opacity .15s;user-select:none;-webkit-user-select:none";
+    chip.addEventListener("mouseenter", function () { chip.style.opacity = "1"; });
+    chip.addEventListener("mouseleave", function () { chip.style.opacity = ".4"; });
+    chip.addEventListener("click", function () { toggleSettings(); });
+    document.body.appendChild(chip);
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", mountChip);
+  } else {
+    mountChip();
+  }
+  /* capture-phase: while the panel is open, keys belong to the panel */
+  window.addEventListener("keydown", function (e) {
+    if (!settingsOpen()) return;
+    if (e.key === "Escape") toggleSettings(false);
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  }, true);
+  window.addEventListener("keyup", function (e) {
+    if (settingsOpen()) e.stopImmediatePropagation();
+  }, true);
+
+  window.arcade = {
+    store: store,
+    reducedMotion: reducedMotion,
+    settings: { open: function () { toggleSettings(true); }, close: function () { toggleSettings(false); } },
+    /* clamp a rAF delta so a backgrounded tab doesn't produce a huge step */
+    clampDt: function (dt, max) { return Math.min(Math.max(dt, 0), max || 0.1); },
+    /* daily-challenge helpers: one date key and one seed, stable all day,
+       shared by every game so "today's run" means the same thing everywhere */
+    dailyKey: function () {
+      var d = new Date(), m = d.getMonth() + 1, da = d.getDate();
+      return d.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (da < 10 ? "0" : "") + da;
+    },
+    dailySeed: function () {
+      var d = new Date();
+      return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+    },
+    /* mulberry32: tiny deterministic PRNG for seeded runs */
+    seededRand: function (seed) {
+      var a = seed >>> 0;
+      return function () {
+        a = (a + 0x6D2B79F5) >>> 0;
+        var t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    },
+    touch: {
+      available: touchOn,
+      sendKey: sendKey,
+      button: touchButton,
+      key: keyButton,
+      dpad: dpad,
+      arrowDpad: arrowDpad,
+      stick: stick
+    },
+    /* Run recorder — shared by the ghost racer and replay trophies.
+
+       A game calls start()/sample()/finish() and gets both a local ghost and,
+       when the arcade server happens to be serving the page, a shared one.
+       Every server call is best-effort: these games are static files that must
+       keep working opened straight off the disk, so a failed fetch is silently
+       ignored rather than surfaced. */
+    run: (function () {
+      var RATE_MS = 100;            // 10 Hz is plenty to interpolate a ghost
+      var MAX_FRAMES = 4000;        // ~6.5 minutes; matches the server cap
+      var cur = null;
+
+      function localKey(game) { return 'arcade_ghost_' + game; }
+
+      function post(path, body) {
+        try {
+          return fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' },
+                               body: JSON.stringify(body) })
+            .then(function (r) { return r.json(); })
+            .catch(function () { return null; });
+        } catch (e) { return Promise.resolve(null); }
+      }
+
+      return {
+        start: function (game, seed) {
+          cur = { game: game, seed: seed === undefined ? null : seed, frames: [], last: -1e9 };
+        },
+        /* Call every frame; it throttles itself. Pass the few numbers needed to
+           redraw the ghost — position, lane, whatever the game interpolates. */
+        sample: function (t) {
+          if (!cur || cur.frames.length >= MAX_FRAMES) return;
+          if (t - cur.last < RATE_MS / 1000) return;
+          cur.last = t;
+          cur.frames.push(Array.prototype.slice.call(arguments, 1).map(function (v) {
+            return Math.round((Number(v) || 0) * 100) / 100;   // 2dp keeps ghosts small
+          }));
+        },
+        recording: function () { return !!cur; },
+        /* Keep the run if it beat the stored ghost, and offer it to the server. */
+        finish: function (score, name) {
+          if (!cur || !cur.frames.length) { cur = null; return Promise.resolve(null); }
+          var ghost = { game: cur.game, seed: cur.seed, frames: cur.frames,
+                        score: Number(score) || 0,
+                        name: name || localStorage.getItem('arcade_name_v1') || 'player' };
+          cur = null;
+          try {
+            var prevRaw = localStorage.getItem(localKey(ghost.game));
+            var prev = prevRaw ? JSON.parse(prevRaw) : null;
+            if (!prev || ghost.score > prev.score) {
+              localStorage.setItem(localKey(ghost.game), JSON.stringify(ghost));
+            }
+          } catch (e) { /* quota or bad JSON — the server copy still matters */ }
+          return post('/api/ghost', ghost);
+        },
+        discard: function () { cur = null; },
+        /* Best available ghost: the server's if reachable, else the local one. */
+        best: function (game) {
+          var local = null;
+          try {
+            var raw = localStorage.getItem(localKey(game));
+            if (raw) local = JSON.parse(raw);
+          } catch (e) {}
+          try {
+            return fetch('/api/ghosts?game=' + encodeURIComponent(game))
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                var remote = d && d.list && d.list[0];
+                if (remote && (!local || remote.score > local.score)) return remote;
+                return local;
+              })
+              .catch(function () { return local; });
+          } catch (e) { return Promise.resolve(local); }
+        },
+        /* Read a ghost at an arbitrary time, interpolating between samples. */
+        at: function (ghost, t) {
+          if (!ghost || !ghost.frames || !ghost.frames.length) return null;
+          var f = ghost.frames, i = Math.floor(t / (RATE_MS / 1000));
+          if (i >= f.length - 1) return f[f.length - 1];
+          if (i < 0) return f[0];
+          var a = f[i], b = f[i + 1], k = (t / (RATE_MS / 1000)) - i, out = [];
+          for (var j = 0; j < a.length; j++) out.push(a[j] + (b[j] - a[j]) * k);
+          return out;
+        }
+      };
+    })()
+  };
+})();
+</script>
+<!-- arcade-shared:end -->
+<script>
+"use strict";
+/* =========================================================
+   POTION BREWERY — a single-file idle game
+   ========================================================= */
+
+// ---------- data ----------
+const BUILDINGS = [
+  {id:"apprentice", name:"Apprentice",          icon:"AP", baseCost:15,     cps:0.1,    flavor:"Stirs when you're not looking."},
+  {id:"garden",     name:"Herb Garden",         icon:"HG", baseCost:100,    cps:1,      flavor:"Mandrake screams are free fertilizer."},
+  {id:"kettle",     name:"Enchanted Kettle",    icon:"EK", baseCost:1100,   cps:8,      flavor:"It whistles in dead languages."},
+  {id:"lab",        name:"Alchemy Lab",         icon:"AL", baseCost:12000,  cps:47,     flavor:"Lead in, gold out, fumes everywhere."},
+  {id:"coven",      name:"Witch Coven",         icon:"WC", baseCost:130000, cps:260,    flavor:"Thirteen witches, one giant ladle."},
+  {id:"dragon",     name:"Dragon Flame",        icon:"DF", baseCost:1.4e6,  cps:1400,   flavor:"The ultimate slow simmer."},
+  {id:"stone",      name:"Philosopher's Stone", icon:"PS", baseCost:2.0e7,  cps:7800,   flavor:"Transmutes doubt into elixir."},
+  {id:"portal",     name:"Arcane Portal",       icon:"PT", baseCost:3.3e8,  cps:44000,  flavor:"Imports potions from braver timelines."},
+  {id:"still",      name:"Celestial Still",     icon:"CS", baseCost:5.1e9,  cps:260000, flavor:"Distills moonlight into pure essence."},
+];
+const COST_SCALE = 1.15;
+
+// decorative scene vignettes painted behind each building's monogram badge (graphics only)
+const VIGNETTES = {
+  apprentice:'<svg class="vig" viewBox="0 0 46 40" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"><rect width="46" height="40" fill="#241a3c"/><circle cx="23" cy="36" r="18" fill="#17102b"/><path d="M23 7 Q32 11 32 23 L32 34 L14 34 L14 23 Q14 11 23 7 Z" fill="#43306e"/><path d="M23 10 Q29 13 29 22 L17 22 Q17 13 23 10 Z" fill="#120b22"/><circle cx="33" cy="9" r="1.2" fill="#cdb7ff" opacity=".8"/></svg>',
+  garden:'<svg class="vig" viewBox="0 0 46 40" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"><rect width="46" height="40" fill="#15241a"/><path d="M0 32 Q23 26 46 32 L46 40 L0 40 Z" fill="#2c1e10"/><path d="M12 31 Q9 20 14 10" stroke="#4fae6b" stroke-width="2" fill="none"/><ellipse cx="10" cy="17" rx="4" ry="2" fill="#5fc27d" transform="rotate(-28 10 17)"/><ellipse cx="15" cy="12" rx="3.4" ry="1.8" fill="#7cf29c" transform="rotate(20 15 12)"/><path d="M30 31 Q33 21 29 13" stroke="#3f9e5f" stroke-width="2" fill="none"/><ellipse cx="32" cy="19" rx="3.6" ry="2" fill="#5fc27d" transform="rotate(26 32 19)"/><ellipse cx="28" cy="14" rx="3" ry="1.7" fill="#8ff2ac" transform="rotate(-22 28 14)"/></svg>',
+  kettle:'<svg class="vig" viewBox="0 0 46 40" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"><rect width="46" height="40" fill="#1d1530"/><ellipse cx="23" cy="28" rx="13" ry="9" fill="#39304d"/><rect x="16" y="15" width="14" height="7" rx="3" fill="#39304d"/><path d="M34 24 Q41 22 40 17" stroke="#39304d" stroke-width="3.5" fill="none"/><path d="M13 17 Q23 7 33 17" stroke="#56497a" stroke-width="2.5" fill="none"/><path d="M23 12 Q21 8 23 4" stroke="#9f93c9" stroke-width="1.5" fill="none" opacity=".7"/></svg>',
+  lab:'<svg class="vig" viewBox="0 0 46 40" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"><rect width="46" height="40" fill="#10202a"/><path d="M20 7 L20 16 L12 31 Q11 34 14 34 L32 34 Q35 34 34 31 L26 16 L26 7 Z" fill="#20323e" stroke="#3e5a6c" stroke-width="1.5"/><path d="M16 24 L30 24 L33 31 Q34 34 31 34 L15 34 Q12 34 13 31 Z" fill="#49e07a" opacity=".85"/><circle cx="20" cy="28" r="1.5" fill="#c9ffda"/><circle cx="26" cy="30" r="1.1" fill="#c9ffda"/></svg>',
+  coven:'<svg class="vig" viewBox="0 0 46 40" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"><rect width="46" height="40" fill="#130c26"/><circle cx="35" cy="10" r="6" fill="#e8e2f7"/><circle cx="32" cy="9" r="5" fill="#130c26"/><ellipse cx="22" cy="30" rx="12" ry="3" fill="#2c2144"/><path d="M13 30 L31 30 L23 11 Z" fill="#2c2144"/><path d="M18 24 L27 24" stroke="#b48cff" stroke-width="1.5" opacity=".7"/><circle cx="10" cy="17" r="1" fill="#b48cff" opacity=".8"/></svg>',
+  dragon:'<svg class="vig" viewBox="0 0 46 40" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"><rect width="46" height="40" fill="#230c08"/><path d="M23 5 Q34 16 31 26 Q30 32 23 35 Q16 32 15 26 Q12 16 23 5 Z" fill="#ff8a3c"/><path d="M23 13 Q28 19 26 27 Q25 31 23 32 Q21 31 20 27 Q18 19 23 13 Z" fill="#ffd98a"/><circle cx="12" cy="10" r="1.2" fill="#ffb45e" opacity=".8"/><circle cx="35" cy="14" r="1" fill="#ffdf8a" opacity=".7"/></svg>',
+  stone:'<svg class="vig" viewBox="0 0 46 40" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"><rect width="46" height="40" fill="#1c0f14"/><polygon points="23,5 35,16 23,35 11,16" fill="#c8415e"/><polygon points="23,5 28,16 23,35 18,16" fill="#ff7d9c" opacity=".85"/><polygon points="11,16 35,16 23,35" fill="#8e2040" opacity=".55"/><circle cx="23" cy="13" r="1.4" fill="#ffd4de" opacity=".9"/></svg>',
+  portal:'<svg class="vig" viewBox="0 0 46 40" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"><rect width="46" height="40" fill="#120a2e"/><ellipse cx="23" cy="20" rx="11" ry="14" fill="#2a1667"/><ellipse cx="23" cy="20" rx="11" ry="14" fill="none" stroke="#b48cff" stroke-width="2"/><ellipse cx="23" cy="20" rx="6" ry="9" fill="#7a5cff" opacity=".65"/><circle cx="23" cy="20" r="2" fill="#e8dcff"/><circle cx="37" cy="8" r="1" fill="#b48cff" opacity=".8"/></svg>',
+  still:'<svg class="vig" viewBox="0 0 46 40" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"><rect width="46" height="40" fill="#0d1430"/><circle cx="11" cy="9" r="5" fill="#dfe8ff"/><circle cx="13.5" cy="8" r="4.2" fill="#0d1430"/><ellipse cx="24" cy="27" rx="9" ry="8" fill="#2b3a5e"/><rect x="21" y="12" width="6" height="9" fill="#2b3a5e"/><path d="M27 16 L38 23" stroke="#4a5e8a" stroke-width="2.5"/><circle cx="39" cy="27" r="2" fill="#9bc4ff"/><circle cx="39" cy="32" r="1.3" fill="#9bc4ff" opacity=".7"/></svg>',
+};
+
+const UPGRADES = [
+  // click upgrades
+  {id:"spoon",   name:"Wooden Spoon",       icon:"WS", desc:"Stirring is twice as effective.",            cost:100,   type:"click", mult:2, unlock:s=>s.runTotal>=50},
+  {id:"ladle",   name:"Silver Ladle",       icon:"SL", desc:"Stirring is twice as effective.",            cost:1500,  type:"click", mult:2, unlock:s=>s.runTotal>=750},
+  {id:"stirrer", name:"Runed Stirring Rod", icon:"SR", desc:"Stirring is 3× as effective.",               cost:30000, type:"click", mult:3, unlock:s=>s.runTotal>=15000},
+  {id:"tap",     name:"Essence Tap",        icon:"ET", desc:"Each stir also brews 1% of your PPS.",        cost:120000,type:"cpsclick", pct:0.01, unlock:s=>s.runTotal>=60000},
+  {id:"whisk",   name:"Dragonbone Whisk",   icon:"DW", desc:"Stirring is 3× as effective.",               cost:2e6,   type:"click", mult:3, unlock:s=>s.runTotal>=1e6},
+  {id:"midas",   name:"Hand of Midas",      icon:"HM", desc:"Each stir also brews 4% of your PPS.",        cost:5e7,   type:"cpsclick", pct:0.04, unlock:s=>s.runTotal>=2e7},
+  // global upgrades
+  {id:"tome",    name:"Master Brewer's Tome",icon:"MT", desc:"All production ×2.",                        cost:1e6,   type:"global", mult:2, unlock:s=>s.runTotal>=5e5},
+  {id:"comet",   name:"Comet-Water Reserve", icon:"CW", desc:"All production ×2.",                        cost:2.5e8, type:"global", mult:2, unlock:s=>s.runTotal>=1e8},
+  {id:"crown",   name:"Crown of the Archmage",icon:"CR",desc:"All production ×3.",                        cost:1e11,  type:"global", mult:3, unlock:s=>s.runTotal>=2e10},
+];
+// per-building ×2 upgrades at 10 / 25 / 50 owned
+const TIER_NAMES = [
+  ["Diligent %s","%s production ×2.",10,10],
+  ["Veteran %s","%s production ×2.",25,120],
+  ["Legendary %s","%s production ×2.",50,2500],
+];
+for(const b of BUILDINGS){
+  TIER_NAMES.forEach(([nameT,descT,need,costMult],i)=>{
+    UPGRADES.push({
+      id:`${b.id}_t${i}`,
+      name:nameT.replace("%s",b.name),
+      icon:b.icon,
+      desc:descT.replace("%s",b.name),
+      cost:b.baseCost*costMult,
+      type:"building", target:b.id, mult:2,
+      unlock:s=>(s.buildings[b.id]||0)>=need
+    });
+  });
+}
+
+// permanent perks bought with Essence
+const PERKS = [
+  {id:"eternal",  icon:"EA", cost:1, name:"Eternal Apprentice", desc:"Begin every transcension with an Apprentice (one joins you now)."},
+  {id:"grip",     icon:"GS", cost:2, name:"Golden Stirrer",     desc:"Stirring is 5x as effective, forever."},
+  {id:"haggler",  icon:"HC", cost:3, name:"Haggler's Charm",    desc:"All buildings cost 10% less."},
+  {id:"cellar",   icon:"TC", cost:3, name:"Temporal Cellar",    desc:"Offline progress cap raised from 8h to 24h."},
+  {id:"memory",   icon:"AM", cost:5, name:"Arcane Memory",      desc:"Keep your stirring upgrades through transcension."},
+  {id:"infusion", icon:"EI", cost:8, name:"Essence Infusion",   desc:"All production x2, forever."},
+];
+
+const ACHIEVEMENTS = [
+  {id:"firstStir", icon:"FS", name:"First Stir",        desc:"Stir the cauldron once.",            check:s=>s.clicks>=1},
+  {id:"stir100",   icon:"EG", name:"Elbow Grease",      desc:"Stir 100 times.",                    check:s=>s.clicks>=100},
+  {id:"stir1000",  icon:"WW", name:"Whirlpool Wrist",  desc:"Stir 1,000 times.",                  check:s=>s.clicks>=1000},
+  {id:"brew1k",    icon:"NB", name:"Novice Brewer",     desc:"Brew 1,000 potions in total.",       check:s=>s.total>=1e3},
+  {id:"brew1m",    icon:"PM", name:"Potion Magnate",    desc:"Brew 1 million potions in total.",   check:s=>s.total>=1e6},
+  {id:"brew1b",    icon:"ET", name:"Elixir Tycoon",     desc:"Brew 1 billion potions in total.",   check:s=>s.total>=1e9},
+  {id:"brew1t",    icon:"LI", name:"Liquid Infinity",   desc:"Brew 1 trillion potions in total.",  check:s=>s.total>=1e12},
+  {id:"hire1",     icon:"HH", name:"Helping Hand",      desc:"Hire your first Apprentice.",        check:s=>(s.buildings.apprentice||0)>=1},
+  {id:"own10",     icon:"GC", name:"Growing Concern",  desc:"Own 10 buildings in total.",         check:s=>totalBuildings(s)>=10},
+  {id:"own100",    icon:"BE", name:"Brewing Empire",    desc:"Own 100 buildings in total.",        check:s=>totalBuildings(s)>=100},
+  {id:"dragonAch", icon:"PF", name:"Playing with Fire", desc:"Harness a Dragon Flame.",            check:s=>(s.buildings.dragon||0)>=1},
+  {id:"portalAch", icon:"DE", name:"Door to Elsewhere", desc:"Open an Arcane Portal.",             check:s=>(s.buildings.portal||0)>=1},
+  {id:"upg1",      icon:"SC", name:"Scholar",           desc:"Purchase your first upgrade.",       check:s=>s.upgrades.length>=1},
+  {id:"upg10",     icon:"AR", name:"Archivist",         desc:"Purchase 10 upgrades.",              check:s=>s.upgrades.length>=10},
+  {id:"pps1k",     icon:"RE", name:"River of Essence",  desc:"Reach 1,000 potions per second.",    check:()=>cachedPps>=1000},
+  {id:"pps1m",     icon:"TB", name:"Tidal Brew",        desc:"Reach 1M potions per second.",       check:()=>cachedPps>=1e6},
+  {id:"hour1",     icon:"NS", name:"Night Shift",       desc:"Play for a full hour.",              check:s=>s.playtime>=3600},
+  {id:"transcend1",icon:"BV", name:"Beyond the Veil",   desc:"Transcend for the first time.",      check:s=>(s.transcensions||0)>=1},
+  {id:"essence5",  icon:"WE", name:"Well of Essence",   desc:"Earn 5 Essence in total.",           check:s=>(s.essenceEarned||0)>=5},
+];
+
+// ---------- state ----------
+const SAVE_KEY = "potionBrewerySave_v1";
+const OFFLINE_CAP_MS = 8*3600*1000;
+const TRANSCEND_BASE = 1e9; // lifetime potions per "unit" in the essence formula
+
+let state = freshState();
+function freshState(){
+  return {
+    potions:0, total:0, clicks:0, clickPotions:0,
+    buildings:{}, upgrades:[], achievements:[],
+    playtime:0, buyMode:"1",
+    lastTick:Date.now(), started:Date.now(),
+    // transcendence (new fields — default for old saves)
+    runTotal:0,        // potions brewed this transcension (drives unlocks)
+    essence:0,         // spendable balance
+    essenceEarned:0,   // lifetime essence earned (drives the +10%/essence multiplier)
+    transcensions:0,
+    perks:[],
+  };
+}
+function totalBuildings(s){ return Object.values(s.buildings).reduce((a,b)=>a+b,0); }
+
+// ---------- number formatting ----------
+const SUFFIXES = ["","K","M","B","T","Qa","Qi","Sx","Sp","Oc","No","Dc"];
+function fmt(n){
+  if(!isFinite(n)) return "∞";
+  if(n<0) return "-"+fmt(-n);
+  if(n<1000){
+    if(n===Math.floor(n)) return String(n);
+    return n<10 ? n.toFixed(1) : String(Math.floor(n));
+  }
+  let tier = Math.min(Math.floor(Math.log10(n)/3), SUFFIXES.length-1);
+  const v = n/Math.pow(10, tier*3);
+  const str = v>=100 ? v.toFixed(0) : v>=10 ? v.toFixed(1) : v.toFixed(2);
+  return str + SUFFIXES[tier];
+}
+function fmtTime(sec){
+  sec = Math.floor(sec);
+  const h=Math.floor(sec/3600), m=Math.floor(sec%3600/60), s=sec%60;
+  if(h>0) return `${h}h ${m}m ${s}s`;
+  if(m>0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+// ---------- derived values ----------
+function has(upgId){ return state.upgrades.includes(upgId); }
+function hasPerk(pid){ return state.perks.includes(pid); }
+function essenceMult(){ return 1 + 0.10*(state.essenceEarned||0); }
+function globalMult(){
+  let m=essenceMult();
+  if(hasPerk("infusion")) m*=2;
+  for(const u of UPGRADES) if(u.type==="global" && has(u.id)) m*=u.mult;
+  return m;
+}
+function buildingMult(bid){
+  let m=1;
+  for(const u of UPGRADES) if(u.type==="building" && u.target===bid && has(u.id)) m*=u.mult;
+  return m;
+}
+function buildingCps(b){
+  return (state.buildings[b.id]||0) * b.cps * buildingMult(b.id) * globalMult();
+}
+function computePps(){
+  let t=0;
+  for(const b of BUILDINGS) t+=buildingCps(b);
+  return t;
+}
+function clickPower(){
+  let p=1;
+  if(hasPerk("grip")) p*=5;
+  for(const u of UPGRADES) if(u.type==="click" && has(u.id)) p*=u.mult;
+  let pct=0;
+  for(const u of UPGRADES) if(u.type==="cpsclick" && has(u.id)) pct+=u.pct;
+  return p + pct*cachedPps;
+}
+let cachedPps = 0;
+
+// cost of buying `count` of building, starting at `owned`
+function costFactor(){ return hasPerk("haggler") ? 0.9 : 1; }
+function bulkCost(b, owned, count){
+  // base * 1.15^owned * (1.15^count - 1) / 0.15
+  return costFactor() * b.baseCost * Math.pow(COST_SCALE, owned) * (Math.pow(COST_SCALE,count)-1) / (COST_SCALE-1);
+}
+function maxAffordable(b, owned, money){
+  const unit = costFactor() * b.baseCost * Math.pow(COST_SCALE, owned);
+  const k = Math.floor(Math.log(money*(COST_SCALE-1)/unit + 1) / Math.log(COST_SCALE));
+  return Math.max(0, k);
+}
+
+// ---------- transcendence math ----------
+function essencePotential(){
+  return Math.floor(Math.cbrt(Math.max(0, state.total)/TRANSCEND_BASE));
+}
+function essenceGain(){
+  return Math.max(0, essencePotential() - (state.essenceEarned||0));
+}
+function nextEssenceAt(){
+  return Math.pow(essencePotential()+1, 3) * TRANSCEND_BASE;
+}
+function offlineCapMs(){
+  return hasPerk("cellar") ? 24*3600*1000 : OFFLINE_CAP_MS;
+}
+
+// ---------- DOM refs ----------
+const $ = id=>document.getElementById(id);
+const el = {
+  potionCount:$("potionCount"), pps:$("ppsDisplay"), clickPowerD:$("clickPowerDisplay"),
+  store:$("store"), upgrades:$("tab-upgrades"), achGrid:$("achGrid"),
+  cauldron:$("cauldron"), zone:$("cauldronZone"), toasts:$("toasts"), saveNote:$("saveNote"),
+  bigCounter:document.querySelector(".counter .big"),
+};
+
+// ---------- store rendering ----------
+const storeRows = {};
+function buildStore(){
+  el.store.innerHTML = "";
+  for(const b of BUILDINGS){
+    const row = document.createElement("div");
+    row.className = "building";
+    row.innerHTML = `
+      <div class="icon">${VIGNETTES[b.id]||""}<span class="mono">${b.icon}</span></div>
+      <div>
+        <div class="b-name">${b.name}</div>
+        <div class="b-prod"></div>
+      </div>
+      <div class="b-right">
+        <div class="b-cost"></div>
+        <div class="b-owned"></div>
+      </div>`;
+    row.title = b.flavor;
+    row.addEventListener("click", ()=>buyBuilding(b));
+    el.store.appendChild(row);
+    storeRows[b.id] = {
+      row,
+      prod: row.querySelector(".b-prod"),
+      cost: row.querySelector(".b-cost"),
+      owned: row.querySelector(".b-owned"),
+    };
+  }
+}
+function buyAmountFor(b){
+  const owned = state.buildings[b.id]||0;
+  if(state.buyMode==="max"){
+    return Math.max(1, maxAffordable(b, owned, state.potions)); // show cost of 1 when 0 affordable
+  }
+  return parseInt(state.buyMode,10);
+}
+function updateStore(){
+  for(const b of BUILDINGS){
+    const r = storeRows[b.id];
+    const owned = state.buildings[b.id]||0;
+    // reveal tiers progressively: show if owned, or previous tier owned, or affordable-ish
+    const idx = BUILDINGS.indexOf(b);
+    const prevOwned = idx===0 || (state.buildings[BUILDINGS[idx-1].id]||0) > 0;
+    const visible = owned>0 || prevOwned || state.runTotal >= b.baseCost*0.5;
+    r.row.classList.toggle("hidden-tier", !visible);
+    if(!visible) continue;
+
+    let count, cost;
+    if(state.buyMode==="max"){
+      count = maxAffordable(b, owned, state.potions);
+      cost = bulkCost(b, owned, Math.max(1,count));
+    } else {
+      count = parseInt(state.buyMode,10);
+      cost = bulkCost(b, owned, count);
+    }
+    const afford = state.buyMode==="max" ? count>=1 : state.potions>=cost;
+    r.row.classList.toggle("afford", afford);
+    r.row.classList.toggle("cant", !afford);
+    const label = state.buyMode==="max" ? `×${Math.max(1,count)}` : `×${count}`;
+    r.cost.textContent = `${fmt(cost)} ${label!=="×1" ? label : ""}`.trim();
+    r.owned.textContent = owned>0 ? owned : "";
+    const each = b.cps*buildingMult(b.id)*globalMult();
+    r.prod.textContent = owned>0
+      ? `${fmt(each)}/s each · ${fmt(buildingCps(b))}/s total`
+      : `produces ${fmt(each)}/s`;
+    if(owned>0 && cachedPps>0){
+      const share = (buildingCps(b)/cachedPps*100);
+      r.prod.innerHTML = `${fmt(each)}/s each · <b>${fmt(buildingCps(b))}/s</b> (${share.toFixed(1)}%)`;
+    }
+  }
+}
+function buyBuilding(b){
+  const owned = state.buildings[b.id]||0;
+  let count;
+  if(state.buyMode==="max"){
+    count = maxAffordable(b, owned, state.potions);
+    if(count<1) return;
+  } else {
+    count = parseInt(state.buyMode,10);
+  }
+  const cost = bulkCost(b, owned, count);
+  if(state.potions < cost) return;
+  state.potions -= cost;
+  state.buildings[b.id] = owned + count;
+  cachedPps = computePps();
+  refreshAll();
+}
+
+// ---------- upgrades ----------
+let upgradeSignature = "";
+function visibleUpgrades(){
+  return UPGRADES.filter(u=>!has(u.id) && u.unlock(state));
+}
+function updateUpgrades(){
+  const vis = visibleUpgrades().sort((a,b)=>a.cost-b.cost);
+  const sig = vis.map(u=>u.id+(state.potions>=u.cost?"a":"x")).join(",");
+  if(sig===upgradeSignature) return;
+  upgradeSignature = sig;
+  el.upgrades.innerHTML = "";
+  if(vis.length===0){
+    el.upgrades.innerHTML = `<div class="empty-note">No upgrades available — keep brewing to discover more…</div>`;
+    return;
+  }
+  for(const u of vis){
+    const d = document.createElement("div");
+    const afford = state.potions>=u.cost;
+    d.className = "upgrade"+(afford?"":" locked");
+    d.innerHTML = `
+      <div class="icon"><span class="mono">${u.icon}</span></div>
+      <div>
+        <div class="u-name">${u.name}</div>
+        <div class="u-desc">${u.desc}</div>
+      </div>
+      <div class="u-cost">${fmt(u.cost)}</div>`;
+    d.addEventListener("click", ()=>{
+      if(state.potions < u.cost) return;
+      state.potions -= u.cost;
+      state.upgrades.push(u.id);
+      cachedPps = computePps();
+      toast("Upgrade Brewed!", u.name, u.desc, u.icon);
+      upgradeSignature = ""; // force rebuild
+      refreshAll();
+    });
+    el.upgrades.appendChild(d);
+  }
+}
+
+// ---------- achievements ----------
+function buildAchievements(){
+  el.achGrid.innerHTML = "";
+  for(const a of ACHIEVEMENTS){
+    const unlocked = state.achievements.includes(a.id);
+    const d = document.createElement("div");
+    d.className = "ach "+(unlocked?"unlocked":"locked");
+    d.innerHTML = `<div class="a-icon"><span>${a.icon}</span></div><div class="a-name">${a.name}</div><div class="a-desc">${a.desc}</div>`;
+    el.achGrid.appendChild(d);
+  }
+}
+function checkAchievements(){
+  let changed=false;
+  for(const a of ACHIEVEMENTS){
+    if(!state.achievements.includes(a.id) && a.check(state)){
+      state.achievements.push(a.id);
+      toast("Feat Unlocked!", a.name, a.desc, a.icon);
+      changed=true;
+    }
+  }
+  if(changed) buildAchievements();
+}
+
+// ---------- wax-seal toasts ----------
+function toast(title, body, desc, seal){
+  const t = document.createElement("div");
+  t.className="toast";
+  t.innerHTML = `
+    <div class="t-seal"><span>${seal||"PB"}</span></div>
+    <div class="t-text">
+      <div class="t-title">${title}</div>
+      <div class="t-body">${body}</div>${desc?`<div class="t-desc">${desc}</div>`:""}
+    </div>`;
+  el.toasts.appendChild(t);
+  setTimeout(()=>{ t.classList.add("out"); setTimeout(()=>t.remove(),450); }, 3600);
+}
+
+// ---------- transcendence ----------
+let perkSignature = "";
+function updatePerks(){
+  const sig = PERKS.map(p=>p.id+(hasPerk(p.id)?"o":state.essence>=p.cost?"a":"x")).join(",");
+  if(sig===perkSignature) return;
+  perkSignature = sig;
+  const list = $("perkList");
+  list.innerHTML = "";
+  for(const p of PERKS){
+    const owned = hasPerk(p.id);
+    const afford = state.essence>=p.cost;
+    const d = document.createElement("div");
+    d.className = "upgrade perk"+(owned?" owned":afford?"":" locked");
+    d.innerHTML = `
+      <div class="icon"><span class="mono">${p.icon}</span></div>
+      <div>
+        <div class="u-name">${p.name}</div>
+        <div class="u-desc">${p.desc}</div>
+      </div>
+      <div class="u-cost">${owned?"OWNED":fmt(p.cost)+" Essence"}</div>`;
+    if(!owned) d.addEventListener("click", ()=>buyPerk(p));
+    list.appendChild(d);
+  }
+}
+function buyPerk(p){
+  if(hasPerk(p.id) || state.essence < p.cost) return;
+  state.essence -= p.cost;
+  state.perks.push(p.id);
+  if(p.id==="eternal") state.buildings.apprentice = (state.buildings.apprentice||0)+1;
+  cachedPps = computePps();
+  perkSignature = "";
+  toast("Perk Attuned!", p.name, p.desc, p.icon);
+  refreshAll();
+  save(false);
+}
+function updateEssenceUI(){
+  const gain = essenceGain();
+  $("essBalance").textContent = fmt(state.essence);
+  $("essBonus").textContent = "+"+Math.round((essenceMult()-1)*100)+"%";
+  $("essNext").textContent = fmt(nextEssenceAt())+" lifetime";
+  const btn2 = $("transcendBtn2");
+  btn2.disabled = gain<1;
+  btn2.classList.toggle("ready", gain>=1);
+  btn2.textContent = gain>=1 ? `Transcend for +${fmt(gain)} Essence` : "Transcend";
+  $("essHint").textContent = gain>=1
+    ? "The veil is thin. Transcend to claim your Essence."
+    : state.total < TRANSCEND_BASE
+      ? `Brew ${fmt(TRANSCEND_BASE)} lifetime potions to unlock Transcendence (${fmt(state.total)} so far).`
+      : `Brew ${fmt(nextEssenceAt()-state.total)} more lifetime potions for your next Essence.`;
+  const btn1 = $("transcendBtn");
+  btn1.style.display = gain>=1 ? "" : "none";
+  if(gain>=1) btn1.textContent = `Transcend +${fmt(gain)} Essence`;
+  updatePerks();
+}
+function openTransModal(){
+  const gain = essenceGain();
+  if(gain<1) return;
+  $("transFormula").textContent =
+    `floor( cbrt( ${fmt(state.total)} / 1B ) ) = ${fmt(essencePotential())}, minus ${fmt(state.essenceEarned)} already claimed`;
+  $("transGain").textContent = fmt(gain);
+  $("transModal").classList.add("show");
+}
+function transFlourish(){
+  const flash = $("transFlash");
+  flash.classList.remove("go");
+  void flash.offsetWidth;
+  flash.classList.add("go");
+  const colors = ["#f3c969","#b48cff","#7cf29c","#ffe9b0"];
+  for(let i=0;i<28;i++){
+    const d = document.createElement("div");
+    d.className = "ess-particle";
+    const ang = Math.random()*Math.PI*2;
+    const dist = 120+Math.random()*320;
+    d.style.setProperty("--dx", Math.cos(ang)*dist+"px");
+    d.style.setProperty("--dy", Math.sin(ang)*dist+"px");
+    const c = colors[i%colors.length];
+    d.style.background = c;
+    d.style.boxShadow = `0 0 12px ${c}`;
+    d.style.animationDelay = (Math.random()*0.15)+"s";
+    document.body.appendChild(d);
+    setTimeout(()=>d.remove(), 1600);
+  }
+}
+function doTranscend(){
+  const gain = essenceGain();
+  if(gain<1) return;
+  state.essence += gain;
+  state.essenceEarned += gain;
+  state.transcensions++;
+  state.potions = 0;
+  state.runTotal = 0;
+  state.buildings = {};
+  state.upgrades = hasPerk("memory")
+    ? state.upgrades.filter(id=>{
+        const u = UPGRADES.find(x=>x.id===id);
+        return u && (u.type==="click" || u.type==="cpsclick");
+      })
+    : [];
+  if(hasPerk("eternal")) state.buildings.apprentice = 1;
+  cachedPps = computePps();
+  upgradeSignature = "";
+  perkSignature = "";
+  $("transModal").classList.remove("show");
+  transFlourish();
+  toast("Transcended!", `+${fmt(gain)} Essence distilled`, "The brewery dissolves... and begins anew, stronger.", "ES");
+  checkAchievements();
+  refreshAll();
+  save(false);
+}
+$("transcendBtn").addEventListener("click", openTransModal);
+$("transcendBtn2").addEventListener("click", openTransModal);
+$("transConfirm").addEventListener("click", doTranscend);
+$("transCancel").addEventListener("click", ()=>$("transModal").classList.remove("show"));
+
+// ---------- clicking ----------
+function stir(ev){
+  const gain = clickPower();
+  state.potions += gain;
+  state.total += gain;
+  state.runTotal += gain;
+  state.clickPotions += gain;
+  state.clicks++;
+  // squash & stretch
+  el.cauldron.classList.remove("squish");
+  void el.cauldron.offsetWidth;
+  el.cauldron.classList.add("squish");
+  // counter tick pulse
+  el.bigCounter.classList.remove("tick");
+  void el.bigCounter.offsetWidth;
+  el.bigCounter.classList.add("tick");
+  // click point within the zone
+  const rect = el.zone.getBoundingClientRect();
+  const x = (ev && ev.clientX ? ev.clientX - rect.left : rect.width/2) + (Math.random()*24-12);
+  const y = (ev && ev.clientY ? ev.clientY - rect.top  : rect.height/3) - 6;
+  // ripple ring
+  const rp = document.createElement("div");
+  rp.className = "ripple";
+  rp.style.left = x+"px";
+  rp.style.top = y+"px";
+  el.zone.appendChild(rp);
+  setTimeout(()=>rp.remove(), 650);
+  // splash droplets
+  const drops = 5 + Math.floor(Math.random()*3);
+  for(let i=0;i<drops;i++){
+    const dp = document.createElement("div");
+    dp.className = "droplet";
+    dp.style.left = x+"px";
+    dp.style.top = y+"px";
+    dp.style.setProperty("--dx", (Math.random()*96-48)+"px");
+    dp.style.setProperty("--up", (22+Math.random()*28)+"px");
+    dp.style.setProperty("--down", (24+Math.random()*22)+"px");
+    dp.style.animationDuration = (.45+Math.random()*.25)+"s";
+    el.zone.appendChild(dp);
+    setTimeout(()=>dp.remove(), 800);
+  }
+  // a burst of cauldron bubbles
+  spawnBubble(); spawnBubble();
+  // floating number with a slight arc
+  const f = document.createElement("div");
+  f.className="float-num";
+  f.textContent = "+"+fmt(gain);
+  f.style.left = x+"px";
+  f.style.top = y+"px";
+  f.style.setProperty("--fx", (Math.random()*70-35)+"px");
+  f.style.setProperty("--rot", (Math.random()*16-8)+"deg");
+  el.zone.appendChild(f);
+  setTimeout(()=>f.remove(), 1150);
+  updateCounters();
+}
+el.cauldron.addEventListener("click", stir);
+
+// ---------- buy mode toggle ----------
+document.querySelectorAll("#buyToggle button").forEach(btn=>{
+  btn.addEventListener("click", e=>{
+    e.stopPropagation();
+    state.buyMode = btn.dataset.amt;
+    document.querySelectorAll("#buyToggle button").forEach(b=>b.classList.toggle("active", b===btn));
+    updateStore();
+  });
+});
+
+// ---------- tabs ----------
+document.querySelectorAll(".tab-btn").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active", b===btn));
+    document.querySelectorAll(".tab-page").forEach(p=>p.classList.toggle("active", p.id==="tab-"+btn.dataset.tab));
+  });
+});
+
+// ---------- UI refresh ----------
+function updateCounters(){
+  // potionCount text is driven by the animated count-up loop below
+  el.pps.textContent = fmt(cachedPps);
+  el.clickPowerD.textContent = fmt(clickPower());
+  document.title = `${fmt(Math.floor(state.potions))} potions — Potion Brewery`;
+}
+function updateStats(){
+  $("stTotal").textContent = fmt(state.total);
+  $("stClickPotions").textContent = fmt(state.clickPotions);
+  $("stClicks").textContent = fmt(state.clicks);
+  $("stPps").textContent = fmt(cachedPps);
+  $("stClickPower").textContent = fmt(clickPower());
+  $("stBuildings").textContent = fmt(totalBuildings(state));
+  $("stUpgrades").textContent = state.upgrades.length;
+  $("stAch").textContent = `${state.achievements.length} / ${ACHIEVEMENTS.length}`;
+  $("stRun").textContent = fmt(state.runTotal);
+  $("stEssence").textContent = fmt(state.essence);
+  $("stEssMult").textContent = "x"+essenceMult().toFixed(1)+(hasPerk("infusion")?" (x2 infused)":"");
+  $("stTrans").textContent = fmt(state.transcensions);
+  $("stPlaytime").textContent = fmtTime(state.playtime);
+}
+function refreshAll(){
+  updateCounters();
+  updateStore();
+  updateUpgrades();
+  updateStats();
+  updateEssenceUI();
+}
+
+// ---------- game loop ----------
+let lastFrame = Date.now();
+setInterval(()=>{
+  const now = Date.now();
+  const dt = Math.min((now-lastFrame)/1000, 60); // guard against tab-sleep spikes (offline handles long gaps)
+  lastFrame = now;
+  const gain = cachedPps*dt;
+  state.potions += gain;
+  state.total += gain;
+  state.runTotal += gain;
+  state.playtime += dt;
+  state.lastTick = now;
+  updateCounters();
+  updateStore();
+  updateUpgrades();
+}, 100);
+
+setInterval(()=>{ checkAchievements(); updateStats(); updateEssenceUI(); }, 1000);
+
+// ---------- save / load ----------
+function save(manual){
+  state.lastTick = Date.now();
+  try{
+    localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+    if(manual){
+      el.saveNote.textContent = "saved!";
+      setTimeout(()=>el.saveNote.textContent="autosaves every 10 seconds", 1500);
+    }
+  }catch(e){ /* storage unavailable */ }
+}
+function load(){
+  let raw=null;
+  try{ raw = localStorage.getItem(SAVE_KEY); }catch(e){}
+  if(!raw) return false;
+  try{
+    const data = JSON.parse(raw);
+    state = Object.assign(freshState(), data);
+    state.buildings = data.buildings||{};
+    state.upgrades = data.upgrades||[];
+    state.achievements = data.achievements||[];
+    state.perks = data.perks||[];
+    // migrate pre-transcendence saves: the whole total so far is this run's total
+    if(typeof data.runTotal !== "number") state.runTotal = state.total;
+    if(typeof data.essence !== "number") state.essence = 0;
+    if(typeof data.essenceEarned !== "number") state.essenceEarned = 0;
+    if(typeof data.transcensions !== "number") state.transcensions = 0;
+    return true;
+  }catch(e){ return false; }
+}
+$("saveBtn").addEventListener("click", ()=>save(true));
+$("resetBtn").addEventListener("click", ()=>{
+  if(!confirm("Pour the whole brewery down the drain?\nThis wipes ALL progress permanently.")) return;
+  if(!confirm("Really? There is no undo potion.")) return;
+  try{ localStorage.removeItem(SAVE_KEY); }catch(e){}
+  state = freshState();
+  cachedPps = 0;
+  upgradeSignature = "";
+  buildAchievements();
+  refreshAll();
+  toast("Fresh Start", "The cauldron gleams, empty and hopeful.");
+});
+setInterval(()=>save(false), 10000);
+window.addEventListener("beforeunload", ()=>save(false));
+
+// ---------- offline progress ----------
+function applyOffline(){
+  const away = Date.now() - (state.lastTick||Date.now());
+  if(away < 20000 || cachedPps<=0) return;
+  const capMs = offlineCapMs();
+  const capH = Math.round(capMs/3600000);
+  const capped = Math.min(away, capMs);
+  const gain = cachedPps * capped/1000;
+  if(gain < 1) return;
+  state.potions += gain;
+  state.total += gain;
+  state.runTotal += gain;
+  $("awayCap").textContent = `(offline progress is capped at ${capH} hours)`;
+  $("awayTime").textContent = fmtTime(away/1000) + (away>capMs ? ` (capped at ${capH}h)` : "");
+  $("awayGain").textContent = fmt(gain);
+  $("awayModal").classList.add("show");
+}
+$("awayClose").addEventListener("click", ()=>$("awayModal").classList.remove("show"));
+
+// ---------- restore buy mode UI ----------
+function restoreBuyMode(){
+  document.querySelectorAll("#buyToggle button").forEach(b=>{
+    b.classList.toggle("active", b.dataset.amt===String(state.buyMode));
+  });
+  if(!["1","10","max"].includes(String(state.buyMode))) state.buyMode="1";
+}
+
+/* =========================================================
+   AMBIENT VISUALS — graphics only, no game logic below
+   ========================================================= */
+const SVGNS = "http://www.w3.org/2000/svg";
+const bubbleLayer = $("bubbleLayer");
+
+// rising bubbles in the cauldron (varied size & speed); big ones pop
+function spawnBubble(opts){
+  const o = opts||{};
+  const c = document.createElementNS(SVGNS,"circle");
+  const cx = 52 + Math.random()*96;
+  const cy = 99 + Math.random()*5;
+  c.setAttribute("cx", cx);
+  c.setAttribute("cy", cy);
+  c.setAttribute("r", o.big ? 5.5+Math.random()*3 : 1.4+Math.random()*3);
+  c.setAttribute("class", o.big ? "jbubble big" : "jbubble");
+  c.style.animationDuration = (o.big ? 1.5+Math.random()*.6 : 1.3+Math.random()*1.9)+"s";
+  bubbleLayer.appendChild(c);
+  c.addEventListener("animationend", ()=>{
+    if(o.big) popBubble(cx, cy-28);
+    c.remove();
+  });
+}
+function popBubble(cx, cy){
+  const ring = document.createElementNS(SVGNS,"circle");
+  ring.setAttribute("cx", cx);
+  ring.setAttribute("cy", cy);
+  ring.setAttribute("r", 6);
+  ring.setAttribute("class", "pop-ring");
+  bubbleLayer.appendChild(ring);
+  ring.addEventListener("animationend", ()=>ring.remove());
+}
+setInterval(()=>{
+  if(document.hidden) return;
+  spawnBubble();
+  if(Math.random()<0.5) spawnBubble();
+  if(Math.random()<0.08) spawnBubble({big:true});
+}, 420);
+
+// dust motes drifting through the moonbeam
+(function makeMotes(){
+  for(let i=0;i<9;i++){
+    const m = document.createElement("div");
+    m.className = "mote";
+    m.style.left = (8+Math.random()*44)+"%";
+    m.style.top = (22+Math.random()*62)+"%";
+    const size = 2+Math.random()*2.5;
+    m.style.width = m.style.height = size+"px";
+    const dur = 6+Math.random()*7;
+    m.style.animationDuration = dur+"s";
+    m.style.animationDelay = (-Math.random()*dur)+"s";
+    el.zone.appendChild(m);
+  }
+})();
+
+// ---------- boot ----------
+buildStore();
+load();
+cachedPps = computePps();
+applyOffline();
+restoreBuyMode();
+buildAchievements();
+refreshAll();
+
+// animated count-up for the potion total (display only)
+let shownPotions = Math.floor(state.potions);
+(function counterLoop(){
+  const target = Math.floor(state.potions);
+  const diff = target - shownPotions;
+  if(Math.abs(diff) < 1){
+    shownPotions = target;
+  } else {
+    shownPotions += diff * 0.22;
+    if(Math.abs(target - shownPotions) < 1) shownPotions = target;
+  }
+  el.potionCount.textContent = fmt(Math.floor(shownPotions));
+  requestAnimationFrame(counterLoop);
+})();
+</script>
+
+<a href="index.html" class="hub-link" style="top:12px;left:14px">&lt; ARCADE</a>
+<style>
+.hub-link{position:fixed;z-index:10000;font:700 11px/1 "Courier New",monospace;letter-spacing:2px;
+color:#cfd8ea;background:rgba(10,12,20,.72);border:1px solid rgba(140,160,210,.4);
+padding:8px 12px;border-radius:999px;text-decoration:none;opacity:.55;transition:opacity .15s;cursor:pointer;}
+.hub-link:hover{opacity:1;color:#fff;}
+</style>
+</body>
+</html>

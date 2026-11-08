@@ -1,0 +1,2291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LUNAR LANDER</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#05060c;overflow:hidden;}
+  canvas{display:block;width:100vw;height:100vh;}
+  #volbox{position:fixed;right:12px;bottom:12px;z-index:10000;display:flex;align-items:center;gap:8px;
+    font:700 10px/1 "Courier New",monospace;letter-spacing:2px;color:#cfd8ea;
+    background:rgba(10,12,20,.72);border:1px solid rgba(140,160,210,.4);border-radius:999px;
+    padding:7px 12px;opacity:.55;transition:opacity .15s;}
+  #volbox:hover{opacity:1;}
+  #vol{width:90px;height:10px;accent-color:#6cff8f;cursor:pointer;}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="volbox">VOL <input type="range" id="vol" min="0" max="1" step="0.05" aria-label="Volume"></div>
+<!-- arcade-shared:start -->
+<script>
+/* Arcade shared runtime.
+   Single source of truth for cross-game boilerplate. build-arcade.py injects
+   this into every game between the arcade-shared markers (and keeps the copies
+   in sync on each run) — edit THIS file, then run: python3 build-arcade.py */
+(function () {
+  "use strict";
+
+  /* ---- safe storage: never throws (Safari private mode, disabled storage) ---- */
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, String(v)); return true; } catch (e) { return false; } },
+    remove: function (k) { try { localStorage.removeItem(k); } catch (e) {} },
+    num: function (k) { var n = parseFloat(store.get(k)); return isFinite(n) ? n : 0; },
+    json: function (k) { try { return JSON.parse(store.get(k)); } catch (e) { return null; } }
+  };
+
+  /* ---- audio: one wrap of the AudioContext constructor gives us both
+     a tab-hidden auto-suspend and an arcade-wide master volume ----
+     Every context's .destination is rerouted through a shared gain node, so
+     the settings panel's master volume applies to every game with no per-game
+     wiring; the games' own volume sliders keep working underneath it.
+     Only contexts *we* suspended are resumed, so a game's own
+     mute-by-suspend behaviour is left alone. */
+  var contexts = [];
+  var autoSuspended = [];
+  var masters = [];
+  function masterLevel() {
+    if (store.get("arcade_master_muted") === "1") return 0;
+    var v = parseFloat(store.get("arcade_master"));
+    return isFinite(v) ? Math.min(Math.max(v, 0), 1) : 1;
+  }
+  function applyMaster() {
+    var lvl = masterLevel();
+    masters.forEach(function (g) {
+      try { g.gain.setTargetAtTime(lvl, g.context.currentTime, 0.02); } catch (e) {}
+    });
+  }
+  ["AudioContext", "webkitAudioContext"].forEach(function (name) {
+    var Orig = window[name];
+    if (!Orig) return;
+    function Patched() {
+      var ctx = arguments.length
+        ? new (Function.prototype.bind.apply(Orig, [null].concat([].slice.call(arguments))))()
+        : new Orig();
+      contexts.push(ctx);
+      try {
+        var realDest = ctx.destination;
+        var master = ctx.createGain();
+        master.gain.value = masterLevel();
+        master.connect(realDest);
+        Object.defineProperty(ctx, "destination", {
+          get: function () { return master; },
+          configurable: true
+        });
+        masters.push(master);
+      } catch (e) { /* master volume is best-effort */ }
+      return ctx;
+    }
+    Patched.prototype = Orig.prototype;
+    window[name] = Patched;
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      contexts.forEach(function (ctx) {
+        if (ctx.state === "running") {
+          autoSuspended.push(ctx);
+          ctx.suspend().catch(function () {});
+        }
+      });
+    } else {
+      autoSuspended.splice(0).forEach(function (ctx) {
+        if (ctx.state === "suspended") ctx.resume().catch(function () {});
+      });
+    }
+  });
+
+  /* ---- reduced motion: tame decorative CSS animation, expose a flag the
+     games consult for canvas effects (shake, flashes, particles). The OS
+     setting is the default; the settings panel can override it either way
+     (arcade_rm: "auto" | "on" | "off"). ---- */
+  var rmQuery = window.matchMedia ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+  function reducedMotion() {
+    var o = store.get("arcade_rm");
+    if (o === "on") return true;
+    if (o === "off") return false;
+    return !!(rmQuery && rmQuery.matches);
+  }
+  var rmStyle = document.createElement("style");
+  (document.head || document.documentElement).appendChild(rmStyle);
+  function syncRMStyle() {
+    rmStyle.textContent = reducedMotion()
+      ? "*,*::before,*::after{animation-duration:.01ms !important;" +
+        "animation-iteration-count:1 !important;transition-duration:.01ms !important;" +
+        "scroll-behavior:auto !important}"
+      : "";
+  }
+  syncRMStyle();
+  if (rmQuery && rmQuery.addEventListener) rmQuery.addEventListener("change", syncRMStyle);
+
+  /* ---- on-screen touch controls ----
+     Created on demand by a game calling arcade.touch.* at the end of its own
+     script. Nothing is shown unless the pointer is coarse (or ?touch=1 forces
+     them for testing). Key buttons synthesize keydown/keyup on window+document
+     with both .key and .code set, so games keep their existing handlers. */
+  var touchOn = (window.matchMedia && matchMedia("(pointer: coarse)").matches) ||
+                /[?&]touch=1\b/.test(location.search);
+  var touchLayer = null;
+  function ensureLayer() {
+    if (!touchLayer) {
+      touchLayer = document.createElement("div");
+      touchLayer.id = "arcade-touch";
+      touchLayer.style.cssText =
+        "position:fixed;inset:0;z-index:15000;pointer-events:none;" +
+        "user-select:none;-webkit-user-select:none";
+      (document.body || document.documentElement).appendChild(touchLayer);
+    }
+    return touchLayer;
+  }
+  function mkEl(style, size) {
+    var el = document.createElement("div");
+    el.style.cssText =
+      "position:absolute;pointer-events:auto;touch-action:none;box-sizing:border-box;" +
+      "width:" + size + "px;height:" + size + "px;border-radius:50%;" +
+      "background:rgba(140,160,210,.13);border:1px solid rgba(140,160,210,.45);" +
+      "color:rgba(232,236,248,.85);display:flex;align-items:center;justify-content:center;" +
+      "font:700 13px/1 system-ui,sans-serif;letter-spacing:1px;" + (style || "");
+    return el;
+  }
+  function sendKey(type, key, code) {
+    var ev = new KeyboardEvent(type, { key: key, code: code, bubbles: true, cancelable: true });
+    window.dispatchEvent(ev);
+    document.dispatchEvent(ev);
+  }
+  function touchButton(o) {
+    if (!touchOn) return null;
+    var el = mkEl(o.style, o.size || 54);
+    el.textContent = o.label || "";
+    if (o.label) el.dataset.k = o.label;
+    var timer = 0;
+    function down(e) {
+      e.preventDefault();
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
+      el.style.background = "rgba(140,160,210,.34)";
+      if (o.onDown) o.onDown();
+      if (o.repeat) timer = setInterval(function () { if (o.onDown) o.onDown(); }, o.repeat);
+    }
+    function up() {
+      el.style.background = "rgba(140,160,210,.13)";
+      if (timer) { clearInterval(timer); timer = 0; }
+      if (o.onUp) o.onUp();
+    }
+    el.addEventListener("pointerdown", down);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+    ensureLayer().appendChild(el);
+    return el;
+  }
+  function keyButton(o) {
+    var held = false;
+    return touchButton({
+      label: o.label, style: o.style, size: o.size, repeat: o.repeat,
+      onDown: function () { held = true; sendKey("keydown", o.key, o.code || o.key); },
+      onUp: function () { if (held) { held = false; sendKey("keyup", o.key, o.code || o.key); } }
+    });
+  }
+  function dpad(o) {
+    if (!touchOn) return;
+    var s = o.size || 52, g = o.gap || 6;
+    var bx = o.left != null ? o.left : 16, by = o.bottom != null ? o.bottom : 16;
+    function at(cx, cy) { return "left:" + cx + "px;bottom:" + cy + "px"; }
+    var m = o.map;
+    keyButton({ label: "▲", key: m.up.key, code: m.up.code, size: s, repeat: o.repeat, style: at(bx + s + g, by + 2 * (s + g)) });
+    keyButton({ label: "◀", key: m.left.key, code: m.left.code, size: s, repeat: o.repeat, style: at(bx, by + s + g) });
+    keyButton({ label: "▶", key: m.right.key, code: m.right.code, size: s, repeat: o.repeat, style: at(bx + 2 * (s + g), by + s + g) });
+    keyButton({ label: "▼", key: m.down.key, code: m.down.code, size: s, repeat: o.repeat, style: at(bx + s + g, by) });
+  }
+  function arrowDpad(o) {
+    o = o || {};
+    o.map = {
+      up: { key: "ArrowUp", code: "ArrowUp" }, down: { key: "ArrowDown", code: "ArrowDown" },
+      left: { key: "ArrowLeft", code: "ArrowLeft" }, right: { key: "ArrowRight", code: "ArrowRight" }
+    };
+    return dpad(o);
+  }
+  function stick(o) {
+    if (!touchOn) return null;
+    var size = o.size || 124;
+    var base = mkEl(o.style, size);
+    if (o.label) base.dataset.k = o.label;
+    var knob = document.createElement("div");
+    knob.style.cssText =
+      "position:absolute;width:44%;height:44%;border-radius:50%;pointer-events:none;" +
+      "background:rgba(140,160,210,.4);left:50%;top:50%;transform:translate(-50%,-50%)";
+    base.appendChild(knob);
+    var active = false;
+    function setKnob(nx, ny) {
+      knob.style.left = (50 + nx * 32) + "%";
+      knob.style.top = (50 + ny * 32) + "%";
+    }
+    function report(e) {
+      var r = base.getBoundingClientRect();
+      var dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+      var dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+      var mag = Math.hypot(dx, dy);
+      if (mag > 1) { dx /= mag; dy /= mag; }
+      setKnob(dx, dy);
+      if (o.onMove) o.onMove(dx, dy, true);
+    }
+    base.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      try { base.setPointerCapture(e.pointerId); } catch (err) {}
+      active = true;
+      report(e);
+    });
+    base.addEventListener("pointermove", function (e) { if (active) report(e); });
+    function end() {
+      if (!active) return;
+      active = false;
+      setKnob(0, 0);
+      if (o.onMove) o.onMove(0, 0, false);
+    }
+    base.addEventListener("pointerup", end);
+    base.addEventListener("pointercancel", end);
+    ensureLayer().appendChild(base);
+    return base;
+  }
+
+  /* ---- play-time heartbeat: the hub sorts and labels cards from this ----
+     Standalone pages identify themselves by filename; inside the all-in-one
+     bundle the overlay stamps data-arcade-game on the iframe. The smoke
+     harness's srcdoc frames carry no stamp, so test runs never pollute it. */
+  var GAME_ID = (function () {
+    try {
+      if (window.frameElement && window.frameElement.dataset.arcadeGame)
+        return window.frameElement.dataset.arcadeGame;
+      if (window.frameElement) return null; /* unstamped frame (smoke harness) */
+    } catch (e) { return null; }
+    var p = location.pathname.split("/").pop();
+    return /\.html$/.test(p) && ["index.html", "arcade.html", "smoke.html"].indexOf(p) === -1 ? p : null;
+  })();
+  if (GAME_ID) {
+    var visSince = document.hidden ? 0 : Date.now();
+    var metaFlush = function () {
+      var add = 0, now = Date.now();
+      if (visSince) { add = (now - visSince) / 1000; visSince = document.hidden ? 0 : now; }
+      else if (add === 0) return; /* hidden and idle: not "playing" */
+      var meta = store.json("arcade_meta_v1") || {};
+      var g = meta[GAME_ID] || (meta[GAME_ID] = { secs: 0 });
+      g.secs = Math.round((g.secs || 0) + add);
+      g.last = now;
+      store.set("arcade_meta_v1", JSON.stringify(meta));
+    };
+    metaFlush();
+    setInterval(metaFlush, 15000);
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { metaFlush(); visSince = 0; }
+      else visSince = Date.now();
+    });
+    window.addEventListener("pagehide", metaFlush);
+  }
+
+  /* ---- settings panel: gear chip on the right edge; Escape closes.
+     Master volume and motion apply to every game through the shared
+     runtime, so this is the same panel with the same behaviour everywhere. */
+  var panel = null, chip = null;
+  function settingsOpen() { return !!(panel && panel.style.display !== "none"); }
+  function motionLabel() {
+    var o = store.get("arcade_rm");
+    return o === "on" ? "MOTION: REDUCED" : o === "off" ? "MOTION: FULL" : "MOTION: AUTO";
+  }
+  function buildPanel() {
+    if (panel) return;
+    panel = document.createElement("div");
+    panel.id = "arcade-settings";
+    panel.style.cssText =
+      "position:fixed;inset:0;z-index:16000;display:none;" +
+      "background:rgba(4,6,12,.55);user-select:none;-webkit-user-select:none";
+    var card = document.createElement("div");
+    card.style.cssText =
+      "position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);" +
+      "min-width:260px;padding:22px 26px;border-radius:14px;" +
+      "background:rgba(14,17,30,.96);border:1px solid rgba(140,160,210,.4);" +
+      "color:#e8ecf8;font:13px/1.5 system-ui,sans-serif";
+    card.innerHTML =
+      '<div style="font:700 13px/1 system-ui;letter-spacing:3px;margin-bottom:16px">ARCADE SETTINGS</div>' +
+      '<label style="font-size:11px;letter-spacing:2px;color:#8b94b0">MASTER VOLUME</label><br>' +
+      '<input id="arc-set-vol" type="range" min="0" max="100" style="width:100%;margin:6px 0 14px">' +
+      '<button id="arc-set-mute" style="' + btnCss() + '"></button> ' +
+      '<button id="arc-set-rm" style="' + btnCss() + '"></button>' +
+      '<div style="font-size:11px;color:#8b94b0;margin-top:14px">Applies to every game. ' +
+      'Per-game volume controls still work underneath.<br>Esc closes.</div>';
+    panel.appendChild(card);
+    panel.addEventListener("pointerdown", function (e) { if (e.target === panel) toggleSettings(false); });
+    (document.body || document.documentElement).appendChild(panel);
+
+    var vol = card.querySelector("#arc-set-vol");
+    var mute = card.querySelector("#arc-set-mute");
+    var rm = card.querySelector("#arc-set-rm");
+    function syncUI() {
+      var v = parseFloat(store.get("arcade_master"));
+      vol.value = Math.round((isFinite(v) ? Math.min(Math.max(v, 0), 1) : 1) * 100);
+      mute.textContent = store.get("arcade_master_muted") === "1" ? "UNMUTE" : "MUTE";
+      rm.textContent = motionLabel();
+    }
+    vol.addEventListener("input", function () {
+      store.set("arcade_master", vol.value / 100);
+      store.set("arcade_master_muted", "0");
+      applyMaster(); syncUI();
+    });
+    mute.addEventListener("click", function () {
+      store.set("arcade_master_muted", store.get("arcade_master_muted") === "1" ? "0" : "1");
+      applyMaster(); syncUI();
+    });
+    rm.addEventListener("click", function () {
+      var o = store.get("arcade_rm");
+      store.set("arcade_rm", o === "on" ? "off" : o === "off" ? "auto" : "on");
+      syncRMStyle(); syncUI();
+    });
+    panel.syncUI = syncUI;
+  }
+  function btnCss() {
+    return "font:700 11px/1 system-ui;letter-spacing:2px;color:#cfd8ea;cursor:pointer;" +
+      "background:rgba(140,160,210,.12);border:1px solid rgba(140,160,210,.4);" +
+      "padding:8px 12px;border-radius:999px";
+  }
+  function toggleSettings(show) {
+    buildPanel();
+    var to = show != null ? show : !settingsOpen();
+    panel.style.display = to ? "block" : "none";
+    if (to) panel.syncUI();
+  }
+  function mountChip() {
+    if (chip || !document.body) return;
+    chip = document.createElement("div");
+    chip.id = "arcade-settings-chip";
+    chip.title = "Arcade settings";
+    chip.textContent = "⚙";
+    chip.style.cssText =
+      "position:fixed;right:8px;top:50%;transform:translateY(-50%);z-index:15990;" +
+      "width:30px;height:30px;border-radius:50%;display:flex;align-items:center;" +
+      "justify-content:center;cursor:pointer;font-size:15px;color:#cfd8ea;" +
+      "background:rgba(10,12,20,.6);border:1px solid rgba(140,160,210,.35);" +
+      "opacity:.4;transition:opacity .15s;user-select:none;-webkit-user-select:none";
+    chip.addEventListener("mouseenter", function () { chip.style.opacity = "1"; });
+    chip.addEventListener("mouseleave", function () { chip.style.opacity = ".4"; });
+    chip.addEventListener("click", function () { toggleSettings(); });
+    document.body.appendChild(chip);
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", mountChip);
+  } else {
+    mountChip();
+  }
+  /* capture-phase: while the panel is open, keys belong to the panel */
+  window.addEventListener("keydown", function (e) {
+    if (!settingsOpen()) return;
+    if (e.key === "Escape") toggleSettings(false);
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  }, true);
+  window.addEventListener("keyup", function (e) {
+    if (settingsOpen()) e.stopImmediatePropagation();
+  }, true);
+
+  window.arcade = {
+    store: store,
+    reducedMotion: reducedMotion,
+    settings: { open: function () { toggleSettings(true); }, close: function () { toggleSettings(false); } },
+    /* clamp a rAF delta so a backgrounded tab doesn't produce a huge step */
+    clampDt: function (dt, max) { return Math.min(Math.max(dt, 0), max || 0.1); },
+    /* daily-challenge helpers: one date key and one seed, stable all day,
+       shared by every game so "today's run" means the same thing everywhere */
+    dailyKey: function () {
+      var d = new Date(), m = d.getMonth() + 1, da = d.getDate();
+      return d.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (da < 10 ? "0" : "") + da;
+    },
+    dailySeed: function () {
+      var d = new Date();
+      return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+    },
+    /* mulberry32: tiny deterministic PRNG for seeded runs */
+    seededRand: function (seed) {
+      var a = seed >>> 0;
+      return function () {
+        a = (a + 0x6D2B79F5) >>> 0;
+        var t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    },
+    touch: {
+      available: touchOn,
+      sendKey: sendKey,
+      button: touchButton,
+      key: keyButton,
+      dpad: dpad,
+      arrowDpad: arrowDpad,
+      stick: stick
+    },
+    /* Run recorder — shared by the ghost racer and replay trophies.
+
+       A game calls start()/sample()/finish() and gets both a local ghost and,
+       when the arcade server happens to be serving the page, a shared one.
+       Every server call is best-effort: these games are static files that must
+       keep working opened straight off the disk, so a failed fetch is silently
+       ignored rather than surfaced. */
+    run: (function () {
+      var RATE_MS = 100;            // 10 Hz is plenty to interpolate a ghost
+      var MAX_FRAMES = 4000;        // ~6.5 minutes; matches the server cap
+      var cur = null;
+
+      function localKey(game) { return 'arcade_ghost_' + game; }
+
+      function post(path, body) {
+        try {
+          return fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' },
+                               body: JSON.stringify(body) })
+            .then(function (r) { return r.json(); })
+            .catch(function () { return null; });
+        } catch (e) { return Promise.resolve(null); }
+      }
+
+      return {
+        start: function (game, seed) {
+          cur = { game: game, seed: seed === undefined ? null : seed, frames: [], last: -1e9 };
+        },
+        /* Call every frame; it throttles itself. Pass the few numbers needed to
+           redraw the ghost — position, lane, whatever the game interpolates. */
+        sample: function (t) {
+          if (!cur || cur.frames.length >= MAX_FRAMES) return;
+          if (t - cur.last < RATE_MS / 1000) return;
+          cur.last = t;
+          cur.frames.push(Array.prototype.slice.call(arguments, 1).map(function (v) {
+            return Math.round((Number(v) || 0) * 100) / 100;   // 2dp keeps ghosts small
+          }));
+        },
+        recording: function () { return !!cur; },
+        /* Keep the run if it beat the stored ghost, and offer it to the server. */
+        finish: function (score, name) {
+          if (!cur || !cur.frames.length) { cur = null; return Promise.resolve(null); }
+          var ghost = { game: cur.game, seed: cur.seed, frames: cur.frames,
+                        score: Number(score) || 0,
+                        name: name || localStorage.getItem('arcade_name_v1') || 'player' };
+          cur = null;
+          try {
+            var prevRaw = localStorage.getItem(localKey(ghost.game));
+            var prev = prevRaw ? JSON.parse(prevRaw) : null;
+            if (!prev || ghost.score > prev.score) {
+              localStorage.setItem(localKey(ghost.game), JSON.stringify(ghost));
+            }
+          } catch (e) { /* quota or bad JSON — the server copy still matters */ }
+          return post('/api/ghost', ghost);
+        },
+        discard: function () { cur = null; },
+        /* Best available ghost: the server's if reachable, else the local one. */
+        best: function (game) {
+          var local = null;
+          try {
+            var raw = localStorage.getItem(localKey(game));
+            if (raw) local = JSON.parse(raw);
+          } catch (e) {}
+          try {
+            return fetch('/api/ghosts?game=' + encodeURIComponent(game))
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                var remote = d && d.list && d.list[0];
+                if (remote && (!local || remote.score > local.score)) return remote;
+                return local;
+              })
+              .catch(function () { return local; });
+          } catch (e) { return Promise.resolve(local); }
+        },
+        /* Read a ghost at an arbitrary time, interpolating between samples. */
+        at: function (ghost, t) {
+          if (!ghost || !ghost.frames || !ghost.frames.length) return null;
+          var f = ghost.frames, i = Math.floor(t / (RATE_MS / 1000));
+          if (i >= f.length - 1) return f[f.length - 1];
+          if (i < 0) return f[0];
+          var a = f[i], b = f[i + 1], k = (t / (RATE_MS / 1000)) - i, out = [];
+          for (var j = 0; j < a.length; j++) out.push(a[j] + (b[j] - a[j]) * k);
+          return out;
+        }
+      };
+    })()
+  };
+})();
+</script>
+<!-- arcade-shared:end -->
+<script>
+"use strict";
+/* ============================================================
+   LUNAR LANDER - classic physics landing game
+   Single file, canvas, no dependencies. No emojis anywhere.
+   ============================================================ */
+
+var canvas = document.getElementById("game");
+var ctx = canvas.getContext("2d");
+var dpr = Math.max(1, window.devicePixelRatio || 1);
+
+/* ---------- fixed logical world, letterbox-fit to window ---------- */
+var W = 1200, H = 800;
+var fit = { s: 1, ox: 0, oy: 0, cw: 0, ch: 0 };
+var stars = [];
+
+function resize() {
+  dpr = Math.max(1, window.devicePixelRatio || 1);
+  fit.cw = window.innerWidth;
+  fit.ch = window.innerHeight;
+  canvas.width  = Math.round(fit.cw * dpr);
+  canvas.height = Math.round(fit.ch * dpr);
+  fit.s  = Math.min(fit.cw / W, fit.ch / H);
+  fit.ox = (fit.cw - W * fit.s) / 2;
+  fit.oy = (fit.ch - H * fit.s) / 2;
+  makeStars();
+}
+
+/* star color palette: cool whites, blue giants, warm yellows, red dwarfs */
+var STAR_COLORS = ["#dfe6f5", "#dfe6f5", "#aac6ff", "#ffe9c4", "#ffc9b4", "#c8f4ff"];
+var nebCanvas = null;
+
+function makeStars() {
+  stars = [];
+  var n = Math.floor(fit.cw * fit.ch / 6200);
+  for (var i = 0; i < n; i++) {
+    var bright = Math.random() < 0.08;
+    stars.push({
+      x: Math.random() * fit.cw,
+      y: Math.random() * fit.ch,
+      r: bright ? 1.6 + Math.random() * 0.9 : (Math.random() < 0.85 ? 1 : 1.5),
+      ph: Math.random() * Math.PI * 2,
+      sp: 0.4 + Math.random() * 1.6,
+      col: STAR_COLORS[Math.floor(Math.random() * STAR_COLORS.length)],
+      glint: bright
+    });
+  }
+  buildNebula();
+}
+
+/* pre-rendered galaxy wisp, rebuilt on resize */
+function buildNebula() {
+  nebCanvas = document.createElement("canvas");
+  var nw = Math.max(2, Math.floor(fit.cw / 2));
+  var nh = Math.max(2, Math.floor(fit.ch / 2));
+  nebCanvas.width = nw; nebCanvas.height = nh;
+  var nx = nebCanvas.getContext("2d");
+  var nr = mulberry32(97531);
+  var hues = [
+    [122, 92, 205], [78, 158, 192], [172, 102, 164], [96, 110, 220]
+  ];
+  for (var i = 0; i < 42; i++) {
+    var t = nr();
+    var px = nw * (0.08 + t * 0.84) + (nr() - 0.5) * nw * 0.14;
+    var py = nh * (0.78 - t * 0.6) + (nr() - 0.5) * nh * 0.16;
+    var rr = (18 + nr() * 60) * (nw / 960 + 0.5);
+    var h = hues[Math.floor(nr() * hues.length)];
+    var a = 0.022 + nr() * 0.03;
+    var g = nx.createRadialGradient(px, py, 0, px, py, rr);
+    g.addColorStop(0, "rgba(" + h[0] + "," + h[1] + "," + h[2] + "," + a.toFixed(3) + ")");
+    g.addColorStop(1, "rgba(" + h[0] + "," + h[1] + "," + h[2] + ",0)");
+    nx.fillStyle = g;
+    nx.beginPath(); nx.arc(px, py, rr, 0, 6.2832); nx.fill();
+  }
+  /* a few pin-point core stars inside the wisp */
+  for (var j = 0; j < 30; j++) {
+    var t2 = nr();
+    nx.globalAlpha = 0.25 + nr() * 0.4;
+    nx.fillStyle = "#e9eefc";
+    nx.fillRect(nw * (0.1 + t2 * 0.8) + (nr() - 0.5) * nw * 0.1,
+                nh * (0.76 - t2 * 0.56) + (nr() - 0.5) * nh * 0.1, 1, 1);
+  }
+  nx.globalAlpha = 1;
+}
+
+/* pre-rendered Earth surface / cloud / city-light strips (equirect, scrolled for rotation) */
+var earthMap = null, earthClouds = null, earthLights = null;
+function buildEarth() {
+  var er = mulberry32(20260101);
+  earthMap = document.createElement("canvas");
+  earthMap.width = 256; earthMap.height = 128;
+  var m = earthMap.getContext("2d");
+  m.fillStyle = "#1c4e9c";
+  m.fillRect(0, 0, 256, 128);
+  for (var o = 0; o < 40; o++) {
+    m.fillStyle = o % 2 ? "rgba(21,72,150,0.5)" : "rgba(40,98,180,0.4)";
+    m.beginPath(); m.arc(er() * 256, er() * 128, 8 + er() * 26, 0, 6.2832); m.fill();
+  }
+  /* continents as clustered blobs; remember cluster centers for the city lights */
+  var cont = [];
+  for (var c = 0; c < 7; c++) {
+    var ccx = er() * 256, ccy = 22 + er() * 84;
+    cont.push([ccx, ccy]);
+    for (var j = 0; j < 26; j++) {
+      var a = er() * 6.2832, d = er() * 22;
+      m.fillStyle = er() < 0.25 ? "#7aa05a" : (er() < 0.5 ? "#5e8c4e" : "#8c9a5e");
+      m.beginPath();
+      m.arc((ccx + Math.cos(a) * d + 256) % 256, ccy + Math.sin(a) * d * 0.6, 3 + er() * 9, 0, 6.2832);
+      m.fill();
+    }
+  }
+  m.fillStyle = "rgba(235,244,252,0.9)";
+  m.fillRect(0, 0, 256, 7); m.fillRect(0, 121, 256, 7);
+  /* cloud swirls */
+  earthClouds = document.createElement("canvas");
+  earthClouds.width = 256; earthClouds.height = 128;
+  var cl = earthClouds.getContext("2d");
+  for (var k = 0; k < 56; k++) {
+    var sx = er() * 256, sy = er() * 128, ln = 10 + er() * 36, bend = (er() - 0.5) * 0.5;
+    cl.fillStyle = "rgba(245,250,255," + (0.1 + er() * 0.2).toFixed(2) + ")";
+    for (var s = 0; s < ln; s += 3) {
+      cl.beginPath();
+      cl.arc((sx + s + 256) % 256, sy + Math.sin(s * 0.22 + k) * 3 + s * bend * 0.2, 2 + er() * 3, 0, 6.2832);
+      cl.fill();
+    }
+  }
+  /* night-side city lights, seeded near the continent clusters */
+  earthLights = document.createElement("canvas");
+  earthLights.width = 256; earthLights.height = 128;
+  var li = earthLights.getContext("2d");
+  for (var g2 = 0; g2 < cont.length; g2++) {
+    for (var q = 0; q < 24; q++) {
+      li.fillStyle = "rgba(255,214,140," + (0.35 + er() * 0.65).toFixed(2) + ")";
+      li.fillRect((cont[g2][0] + (er() - 0.5) * 26 + 256) % 256,
+                  cont[g2][1] + (er() - 0.5) * 14, 1, 1);
+    }
+  }
+}
+window.addEventListener("resize", resize);
+
+/* ---------- shared art constants / textures ---------- */
+var SUNDIR = { x: -0.5, y: -0.866 };   /* unit vector pointing toward the sun (upper-left) */
+var rings = [];                        /* expanding shockwave / dust rings */
+var flashT = 0;                        /* crash white-out timer */
+var landedAt = 0;                      /* gtime of last touchdown, for gear compression */
+var terrainTex = null, TT = 2;         /* baked terrain detail canvas, 2x oversampled */
+var goldTex = null, goldPat = null;    /* procedural gold foil for the descent stage */
+
+function makeGoldFoil() {
+  goldTex = document.createElement("canvas");
+  goldTex.width = 24; goldTex.height = 16;
+  var g = goldTex.getContext("2d");
+  var gr = mulberry32(31337);
+  g.fillStyle = "#c08f2e";
+  g.fillRect(0, 0, 24, 16);
+  var cols = ["#e8c164", "#a87a26", "#f5d98b", "#8f6a1e", "#d9ab45", "#7a5a16"];
+  for (var i = 0; i < 150; i++) {
+    g.fillStyle = cols[Math.floor(gr() * cols.length)];
+    g.globalAlpha = 0.5 + gr() * 0.5;
+    g.fillRect(Math.floor(gr() * 24), Math.floor(gr() * 16), 1 + (gr() < 0.3 ? 1 : 0), 1);
+  }
+  g.globalAlpha = 0.35;
+  g.strokeStyle = "#5e440f";
+  g.lineWidth = 0.6;
+  for (var k = 0; k < 5; k++) {
+    g.beginPath();
+    g.moveTo(gr() * 24, gr() * 16);
+    g.lineTo(gr() * 24, gr() * 16);
+    g.stroke();
+  }
+  g.globalAlpha = 1;
+  goldPat = ctx.createPattern(goldTex, "repeat");
+}
+
+function addRing(x, y, r1, color, flat) {
+  rings.push({ x: x, y: y, t: 0, life: 0.7, r1: r1, color: color, flat: flat ? 0.26 : 1 });
+}
+function updateRings(dt) {
+  for (var i = rings.length - 1; i >= 0; i--) {
+    rings[i].t += dt;
+    if (rings[i].t >= rings[i].life) rings.splice(i, 1);
+  }
+}
+
+/* ---------- persistence ---------- */
+var BEST_KEY = "ll_best_landings";
+var best = 0;
+try { best = parseInt(localStorage.getItem(BEST_KEY), 10) || 0; } catch (e) { best = 0; }
+function saveBest() {
+  try { localStorage.setItem(BEST_KEY, String(best)); } catch (e) {}
+}
+
+/* ---------- audio ---------- */
+var AC = null, master = null, muted = false;
+var thrustGain = null, thrustFilter = null;
+var lastBeep = 0;
+
+/* shared arcade volume (0..1), scales the master gain */
+var VOL_KEY = "arcade_volume";
+var volume = 0.7;
+try {
+  var vv = parseFloat(localStorage.getItem(VOL_KEY));
+  if (!isNaN(vv)) volume = Math.max(0, Math.min(1, vv));
+} catch (e) {}
+function applyVolume() {
+  if (master) master.gain.value = muted ? 0 : 0.72 * volume;
+  try { localStorage.setItem(VOL_KEY, String(volume)); } catch (e) {}
+}
+
+function initAudio() {
+  if (AC) return;
+  try {
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    master = AC.createGain();
+    master.gain.value = muted ? 0 : 0.72 * volume;
+    master.connect(AC.destination);
+    /* looping noise buffer for the engine rumble */
+    var len = AC.sampleRate * 1.5;
+    var buf = AC.createBuffer(1, len, AC.sampleRate);
+    var d = buf.getChannelData(0);
+    for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    var src = AC.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    thrustFilter = AC.createBiquadFilter();
+    thrustFilter.type = "lowpass";
+    thrustFilter.frequency.value = 140;
+    thrustGain = AC.createGain();
+    thrustGain.gain.value = 0;
+    src.connect(thrustFilter);
+    thrustFilter.connect(thrustGain);
+    thrustGain.connect(master);
+    src.start();
+  } catch (e) { AC = null; }
+}
+function setThrustSound(on) {
+  if (!AC || !thrustGain) return;
+  var t = AC.currentTime;
+  thrustGain.gain.cancelScheduledValues(t);
+  thrustGain.gain.setTargetAtTime(on ? 0.9 : 0, t, on ? 0.04 : 0.08);
+}
+function beep(freq, dur, type, vol) {
+  if (!AC) return;
+  var o = AC.createOscillator(), g = AC.createGain();
+  o.type = type || "square";
+  o.frequency.value = freq;
+  g.gain.value = vol || 0.18;
+  g.gain.setTargetAtTime(0, AC.currentTime + dur * 0.6, 0.03);
+  o.connect(g); g.connect(master);
+  o.start();
+  o.stop(AC.currentTime + dur + 0.1);
+}
+function crashSound() {
+  if (!AC) return;
+  var len = AC.sampleRate * 0.8;
+  var buf = AC.createBuffer(1, len, AC.sampleRate);
+  var d = buf.getChannelData(0);
+  for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
+  var src = AC.createBufferSource(); src.buffer = buf;
+  var f = AC.createBiquadFilter(); f.type = "lowpass";
+  f.frequency.setValueAtTime(900, AC.currentTime);
+  f.frequency.exponentialRampToValueAtTime(90, AC.currentTime + 0.7);
+  var g = AC.createGain(); g.gain.value = 0.9;
+  src.connect(f); f.connect(g); g.connect(master);
+  src.start();
+}
+function successSound() {
+  if (!AC) return;
+  beep(523, 0.14, "sine", 0.22);
+  setTimeout(function () { beep(659, 0.14, "sine", 0.22); }, 140);
+  setTimeout(function () { beep(784, 0.25, "sine", 0.22); }, 280);
+}
+function toggleMute() {
+  muted = !muted;
+  applyVolume();
+}
+function buzz() {
+  /* engine-trouble warning buzz */
+  if (!AC) return;
+  var o = AC.createOscillator(), g = AC.createGain();
+  o.type = "sawtooth";
+  o.frequency.value = 108;
+  g.gain.value = 0.2;
+  g.gain.setTargetAtTime(0, AC.currentTime + 0.32, 0.06);
+  o.connect(g); g.connect(master);
+  o.start();
+  o.stop(AC.currentTime + 0.7);
+}
+
+/* ---------- input ---------- */
+var keys = {};
+window.addEventListener("keydown", function (e) {
+  var k = e.key;
+  if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].indexOf(k) >= 0) e.preventDefault();
+  initAudio();
+  if (AC && AC.state === "suspended") AC.resume();
+  keys[k.length === 1 ? k.toLowerCase() : k] = true;
+  if (!e.repeat) {
+    if (k === "m" || k === "M") toggleMute();
+    if (k === "p" || k === "P") { if (state === "play") paused = !paused; }
+    if (k === "Enter" || k === "r" || k === "R") {
+      if (state === "title") startRun(false);
+      else if (state === "gameover") startRun(false);
+      else if (state === "landed") nextLevel();
+    }
+    if ((k === "d" || k === "D") && (state === "title" || state === "gameover")) startRun(true);
+    if (k === " " && state === "landed") nextLevel();
+  }
+});
+window.addEventListener("keyup", function (e) {
+  var k = e.key;
+  keys[k.length === 1 ? k.toLowerCase() : k] = false;
+});
+canvas.addEventListener("mousedown", function () {
+  initAudio();
+  if (AC && AC.state === "suspended") AC.resume();
+  if (state === "title" || state === "gameover") startRun(false);
+  else if (state === "landed") nextLevel();
+});
+
+/* ---------- touch controls ---------- */
+var isTouch = ("ontouchstart" in window) || ((navigator.maxTouchPoints || 0) > 0);
+var touchKeys = { left: false, right: false, thrust: false };
+
+function touchButtons() {
+  var r = 44, m = 24;
+  return [
+    { id: "left",   x: m + r,            y: fit.ch - m - r, r: r },
+    { id: "right",  x: m + r * 3 + 18,   y: fit.ch - m - r, r: r },
+    { id: "thrust", x: fit.cw - m - r - 8, y: fit.ch - m - r - 4, r: r + 10 }
+  ];
+}
+function applyTouches(tl) {
+  touchKeys.left = touchKeys.right = touchKeys.thrust = false;
+  var btns = touchButtons();
+  for (var i = 0; i < tl.length; i++) {
+    var tx = tl[i].clientX, ty = tl[i].clientY;
+    for (var b = 0; b < btns.length; b++) {
+      var dx = tx - btns[b].x, dy = ty - btns[b].y;
+      var rr = btns[b].r + 16;
+      if (dx * dx + dy * dy <= rr * rr) touchKeys[btns[b].id] = true;
+    }
+  }
+}
+canvas.addEventListener("touchstart", function (e) {
+  e.preventDefault();
+  isTouch = true;
+  initAudio();
+  if (AC && AC.state === "suspended") AC.resume();
+  if (state === "title" || state === "gameover") startRun(false);
+  else if (state === "landed") nextLevel();
+  applyTouches(e.touches);
+}, { passive: false });
+canvas.addEventListener("touchmove", function (e) {
+  e.preventDefault();
+  applyTouches(e.touches);
+}, { passive: false });
+canvas.addEventListener("touchend", function (e) {
+  e.preventDefault();
+  applyTouches(e.touches);
+}, { passive: false });
+canvas.addEventListener("touchcancel", function (e) {
+  applyTouches(e.touches);
+});
+
+/* ---------- game state ---------- */
+var state = "title";       /* title | play | landed | crashed | gameover */
+var paused = false;
+var level = 1;
+var landings = 0;
+var score = 0;
+var gravity = 26;
+var terrain = [];          /* points {x,y} */
+var pads = [];             /* {x1,x2,y,mult} */
+var particles = [];
+var lander = null;
+var cam = { x: 0, y: 0, z: 1 };
+var touchdown = null;      /* stats of last contact */
+var crashTimer = 0;
+var gtime = 0;
+
+/* ---------- missions ---------- */
+var MISSIONS = {
+  normal: { name: "STANDARD DESCENT", desc: "LAND GENTLY ON A FLAT PAD" },
+  night:  { name: "NIGHT LANDING",    desc: "DARK TERRAIN - FOLLOW THE PAD LIGHTS" },
+  engine: { name: "ENGINE TROUBLE",   desc: "MAIN ENGINE CUTS OUT - PLAN YOUR MARGINS" },
+  highg:  { name: "HIGH GRAVITY",     desc: "GRAVITY IS 50 PERCENT STRONGER" },
+  drip:   { name: "FUEL DRIP",        desc: "TANK IS LEAKING - LAND FAST" }
+};
+var mission = "normal";
+var missionTimer = 0;      /* announcement banner countdown */
+var lastMission = "";
+var engineCutT = 0;        /* remaining engine cutout time */
+var engineNextCut = 0;     /* time until next cutout */
+var engineOutNow = false;
+
+function pickMission(n, rnd) {
+  if (n === 1) return "normal";
+  var pool = ["normal", "normal"];
+  if (n >= 2) pool.push("night");
+  if (n >= 3) pool.push("highg");
+  if (n >= 4) pool.push("drip");
+  if (n >= 5) pool.push("engine");
+  /* deeper in the run, harder variants dominate */
+  if (n >= 6) { pool = pool.concat(["night", "highg", "drip", "engine"]); pool.shift(); }
+  var m = pool[Math.floor(rnd() * pool.length)];
+  var guard = 0;
+  while (m === lastMission && m !== "normal" && guard < 8) {
+    m = pool[Math.floor(rnd() * pool.length)];
+    guard++;
+  }
+  return m;
+}
+
+/* ---------- daily challenge (seeded PRNG) ---------- */
+var DAILY_KEY = "ll_daily";
+var daily = false;
+var rng = Math.random;     /* generation randomness source; seeded for daily */
+var dailyBest = { date: "", landings: 0 };
+try {
+  var dj = JSON.parse(localStorage.getItem(DAILY_KEY));
+  if (dj && typeof dj.date === "string") dailyBest = { date: dj.date, landings: dj.landings | 0 };
+} catch (e) {}
+function saveDaily() {
+  try { localStorage.setItem(DAILY_KEY, JSON.stringify(dailyBest)); } catch (e) {}
+}
+function todayStr() {
+  var d = new Date();
+  var mo = String(d.getMonth() + 1), da = String(d.getDate());
+  if (mo.length < 2) mo = "0" + mo;
+  if (da.length < 2) da = "0" + da;
+  return d.getFullYear() + "-" + mo + "-" + da;
+}
+function hashStr(s) {
+  var h = 2166136261;
+  for (var i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function recordDailyProgress() {
+  if (!daily) return;
+  var t = todayStr();
+  if (dailyBest.date !== t) dailyBest = { date: t, landings: 0 };
+  if (landings > dailyBest.landings) {
+    dailyBest.landings = landings;
+    saveDaily();
+  }
+}
+
+function levelCfg(n) {
+  return {
+    gravity: 26 + (n - 1) * 3,
+    fuel: Math.max(55, 110 - (n - 1) * 7),
+    padCount: n >= 5 ? 2 : 3,
+    padBase: Math.max(36, 94 - (n - 1) * 7),
+    // crosswind arrives at level 2 and stiffens from there
+    wind: n < 2 ? 0 : Math.min(16, 4 + (n - 2) * 2.2)
+  };
+}
+
+/* ---------- crosswind: steady drift plus gusts you have to anticipate ---------- */
+var windBase = 0, windNow = 0, gustT = 0, gustTarget = 0;
+function initWind(cfg) {
+  windBase = cfg.wind * (rng() < 0.5 ? -1 : 1);
+  windNow = windBase;
+  gustTarget = windBase;
+  gustT = 2 + rng() * 3;
+}
+function updateWind(dt) {
+  if (windBase === 0) return;
+  gustT -= dt;
+  if (gustT <= 0) {
+    gustT = 1.6 + Math.random() * 3.4;
+    // gusts swing between half and double the steady breeze
+    gustTarget = windBase * (0.5 + Math.random() * 1.5);
+  }
+  windNow += (gustTarget - windNow) * Math.min(1, dt * 1.3);
+}
+
+/* ---------- terrain ---------- */
+function terrainHeightAt(x) {
+  if (x <= terrain[0].x) return terrain[0].y;
+  for (var i = 1; i < terrain.length; i++) {
+    if (x <= terrain[i].x) {
+      var a = terrain[i - 1], b = terrain[i];
+      var t = (x - a.x) / (b.x - a.x);
+      return a.y + (b.y - a.y) * t;
+    }
+  }
+  return terrain[terrain.length - 1].y;
+}
+
+function genTerrain(cfg) {
+  var pts = [];
+  var seg = 24;
+  var n = Math.ceil(W / seg) + 1;
+  var y = H * (0.62 + rng() * 0.15);
+  for (var i = 0; i < n; i++) {
+    pts.push({ x: i * seg, y: y });
+    y += (rng() * 2 - 1) * 46;
+    /* occasional sharp peaks */
+    if (rng() < 0.14) y += (rng() * 2 - 1) * 90;
+    y = Math.max(H * 0.42, Math.min(H * 0.9, y));
+  }
+  pts[pts.length - 1].x = W;
+
+  /* carve flat landing pads with varying widths / multipliers */
+  pads = [];
+  var widths = [];
+  for (var p = 0; p < cfg.padCount; p++) {
+    var w = cfg.padBase * (p === 0 ? 1 : p === 1 ? 0.72 : 0.52);
+    widths.push(Math.max(32, w));
+  }
+  var zones = [];
+  var tries = 0;
+  while (pads.length < cfg.padCount && tries < 400) {
+    tries++;
+    var w2 = widths[pads.length];
+    var cx = 60 + rng() * (W - 120 - w2);
+    var ok = true;
+    for (var z = 0; z < zones.length; z++) {
+      if (Math.abs(cx - zones[z]) < W / (cfg.padCount + 0.5)) { ok = false; break; }
+    }
+    if (!ok) continue;
+    zones.push(cx);
+    var i0 = Math.round(cx / seg);
+    var i1 = Math.round((cx + w2) / seg);
+    i1 = Math.max(i1, i0 + 1);
+    var py = pts[i0].y;
+    for (var j = i0; j <= Math.min(i1, pts.length - 1); j++) pts[j].y = py;
+    var mult = w2 >= 70 ? 1 : (w2 >= 50 ? 2 : 3);
+    pads.push({ x1: pts[i0].x, x2: pts[Math.min(i1, pts.length - 1)].x, y: py, mult: mult });
+  }
+  terrain = pts;
+  bakeTerrain();
+}
+
+/* bake layered rock, craters, regolith noise and sun-side rim light into a texture.
+   Uses its own seeded PRNG so the gameplay rng sequence (daily determinism) is untouched. */
+function bakeTerrain() {
+  var night = mission === "night";
+  var th = H + 80;
+  terrainTex = document.createElement("canvas");
+  terrainTex.width = W * TT;
+  terrainTex.height = th * TT;
+  var t = terrainTex.getContext("2d");
+  t.scale(TT, TT);
+  var tr = mulberry32(hashStr("TEX" + level + mission + terrain[0].y.toFixed(1)));
+
+  /* base rock body */
+  t.beginPath();
+  t.moveTo(terrain[0].x, terrain[0].y);
+  for (var i = 1; i < terrain.length; i++) t.lineTo(terrain[i].x, terrain[i].y);
+  t.lineTo(W, th); t.lineTo(0, th);
+  t.closePath();
+  var g = t.createLinearGradient(0, H * 0.35, 0, th);
+  g.addColorStop(0, night ? "#151823" : "#2d3342");
+  g.addColorStop(0.5, night ? "#0d0f16" : "#1e222e");
+  g.addColorStop(1, night ? "#07080d" : "#10121a");
+  t.fillStyle = g;
+  t.fill();
+  t.save();
+  t.clip();
+
+  /* faint strata bands */
+  for (var sb = 0; sb < 6; sb++) {
+    var by = H * 0.5 + tr() * (th - H * 0.5);
+    t.fillStyle = tr() < 0.5 ? "rgba(255,255,255,0.025)" : "rgba(0,0,0,0.06)";
+    t.fillRect(0, by, W, 6 + tr() * 22);
+  }
+
+  /* craters: sun-side rim light, far-side shadow, dark bowl */
+  for (var cNum = 0; cNum < 16; cNum++) {
+    var cx = tr() * W;
+    var cy = terrainHeightAt(cx) + 14 + tr() * 230;
+    if (cy > th - 10) continue;
+    var cr = 4 + tr() * 20;
+    var bowl = t.createRadialGradient(cx + cr * 0.18, cy + cr * 0.12, cr * 0.1, cx, cy, cr);
+    bowl.addColorStop(0, night ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.42)");
+    bowl.addColorStop(1, "rgba(0,0,0,0)");
+    t.fillStyle = bowl;
+    t.beginPath(); t.ellipse(cx, cy, cr, cr * 0.62, 0, 0, Math.PI * 2); t.fill();
+    t.lineWidth = 1.1;
+    t.strokeStyle = night ? "rgba(150,165,200,0.16)" : "rgba(200,212,235,0.3)";
+    t.beginPath(); t.ellipse(cx, cy, cr, cr * 0.62, 0, Math.PI * 0.85, Math.PI * 1.75); t.stroke();
+    t.strokeStyle = "rgba(0,0,0,0.35)";
+    t.beginPath(); t.ellipse(cx, cy, cr, cr * 0.62, 0, Math.PI * 1.9, Math.PI * 0.6); t.stroke();
+  }
+
+  /* regolith speckle noise, denser near the surface */
+  for (var n = 0; n < 5200; n++) {
+    var nx = tr() * W;
+    var ny = terrainHeightAt(nx) + tr() * tr() * 300;
+    if (ny > th) continue;
+    var lite = tr() < 0.45;
+    t.fillStyle = lite ?
+      (night ? "rgba(170,182,212,0.10)" : "rgba(200,210,232,0.16)") :
+      "rgba(0,0,0,0.22)";
+    t.fillRect(nx, ny, tr() < 0.2 ? 1.6 : 0.9, 0.9);
+  }
+  t.restore();
+
+  /* sun-direction rim light / shade along the surface */
+  for (var s2 = 1; s2 < terrain.length; s2++) {
+    var a2 = terrain[s2 - 1], b2 = terrain[s2];
+    var dx = b2.x - a2.x, dy = b2.y - a2.y;
+    var ln = Math.sqrt(dx * dx + dy * dy) || 1;
+    var ndot = (dy / ln) * SUNDIR.x + (-dx / ln) * SUNDIR.y; /* up-normal . sun */
+    t.beginPath();
+    t.moveTo(a2.x, a2.y);
+    t.lineTo(b2.x, b2.y);
+    if (ndot > 0) {
+      t.strokeStyle = night ?
+        "rgba(140,155,195," + (0.1 + ndot * 0.22).toFixed(3) + ")" :
+        "rgba(208,218,242," + (0.22 + ndot * 0.55).toFixed(3) + ")";
+      t.lineWidth = 1.7;
+    } else {
+      t.strokeStyle = "rgba(0,0,0," + (0.25 - ndot * 0.3).toFixed(3) + ")";
+      t.lineWidth = 1.4;
+    }
+    t.stroke();
+  }
+}
+
+function padAt(x) {
+  for (var i = 0; i < pads.length; i++) {
+    if (x >= pads[i].x1 + 2 && x <= pads[i].x2 - 2) return pads[i];
+  }
+  return null;
+}
+
+/* ---------- lander ---------- */
+function newLander(fuel) {
+  return {
+    x: W * (0.2 + rng() * 0.6),
+    y: 90,
+    vx: (rng() < 0.5 ? 1 : -1) * (20 + rng() * 35),
+    vy: 8,
+    angle: 0,
+    fuel: fuel,
+    maxFuel: fuel,
+    thrusting: false,
+    alive: true,
+    down: false
+  };
+}
+function legTips(l) {
+  var c = Math.cos(l.angle), s = Math.sin(l.angle);
+  function pt(px, py) { return { x: l.x + px * c - py * s, y: l.y + px * s + py * c }; }
+  return [pt(-11, 14), pt(11, 14)];
+}
+function bodyPoints(l) {
+  var c = Math.cos(l.angle), s = Math.sin(l.angle);
+  function pt(px, py) { return { x: l.x + px * c - py * s, y: l.y + px * s + py * c }; }
+  return [pt(0, -12), pt(-9, 0), pt(9, 0), pt(0, 9)];
+}
+
+/* ---------- run control ---------- */
+function startRun(isDaily) {
+  daily = !!isDaily;
+  rng = daily ? mulberry32(hashStr("LL" + todayStr())) : Math.random;
+  level = 1;
+  landings = 0;
+  score = 0;
+  lastMission = "";
+  startLevel();
+}
+function startLevel() {
+  var cfg = levelCfg(level);
+  mission = pickMission(level, rng);
+  lastMission = mission;
+  gravity = cfg.gravity * (mission === "highg" ? 1.5 : 1);
+  genTerrain(cfg);
+  lander = newLander(cfg.fuel);
+  initWind(cfg);
+  particles = [];
+  touchdown = null;
+  paused = false;
+  missionTimer = 3.2;
+  engineCutT = 0;
+  engineOutNow = false;
+  engineNextCut = 2.5 + Math.random() * 4;
+  cam.x = 0; cam.y = 0; cam.z = 1;
+  state = "play";
+}
+function nextLevel() {
+  level++;
+  startLevel();
+}
+
+/* ---------- particles ---------- */
+function spawn(x, y, vx, vy, life, size, color, kind) {
+  particles.push({ x: x, y: y, vx: vx, vy: vy, life: life, t: life, size: size, color: color, kind: kind || "spark", rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 10 });
+}
+function explode(x, y, vx, vy) {
+  for (var i = 0; i < 46; i++) {
+    var a = Math.random() * Math.PI * 2;
+    var sp = 40 + Math.random() * 220;
+    spawn(x, y, vx * 0.3 + Math.cos(a) * sp, vy * 0.3 + Math.sin(a) * sp - 60,
+      0.6 + Math.random() * 1.1, 1 + Math.random() * 2.5,
+      Math.random() < 0.5 ? "#ffb347" : (Math.random() < 0.5 ? "#fff" : "#ff6a3d"),
+      "spark");
+  }
+  for (var j = 0; j < 14; j++) {
+    var a2 = Math.random() * Math.PI * 2;
+    var sp2 = 30 + Math.random() * 140;
+    spawn(x, y, Math.cos(a2) * sp2, Math.sin(a2) * sp2 - 80,
+      0.9 + Math.random() * 1.2, 3 + Math.random() * 5, "#9aa3b2", "chunk");
+  }
+  /* settling smoke */
+  for (var s3 = 0; s3 < 12; s3++) {
+    spawn(x + (Math.random() - 0.5) * 18, y + (Math.random() - 0.5) * 10,
+      (Math.random() - 0.5) * 50, -20 - Math.random() * 45,
+      1.5 + Math.random() * 1.4, 5 + Math.random() * 8, "#5a606c", "smoke");
+  }
+  flashT = 0.3;
+  addRing(x, y, 10, "255,200,120", false);
+}
+function updateParticles(dt) {
+  for (var i = particles.length - 1; i >= 0; i--) {
+    var p = particles[i];
+    p.t -= dt;
+    if (p.t <= 0) { particles.splice(i, 1); continue; }
+    var soft = p.kind === "dust" || p.kind === "smoke";
+    p.vy += (p.kind === "chunk" ? gravity * 1.4 : gravity * (soft ? 0.08 : 0.5)) * dt;
+    if (soft) { p.vx *= Math.max(0, 1 - 1.6 * dt); p.vy *= Math.max(0, 1 - 1.2 * dt); }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.rot += p.vr * dt;
+    var ty = terrainHeightAt(p.x);
+    if (p.y > ty) {
+      p.y = ty;
+      if (soft) { p.vy = 0; } else { p.vy *= -0.35; p.vx *= 0.6; }
+    }
+  }
+}
+
+/* ---------- physics update ---------- */
+var SAFE_VY = 42, SAFE_VX = 32, SAFE_ANG = 0.16; /* ~9 degrees */
+
+function update(dt) {
+  gtime += dt;
+  updateParticles(dt);
+  updateRings(dt);
+  if (flashT > 0) flashT -= dt;
+  if (state === "crashed") {
+    crashTimer -= dt;
+    if (crashTimer <= 0) {
+      state = "gameover";
+      if (landings > best) { best = landings; saveBest(); }
+    }
+    return;
+  }
+  if (state !== "play" || paused) { setThrustSound(false); return; }
+
+  var l = lander;
+  if (missionTimer > 0) missionTimer -= dt;
+
+  /* mission effects */
+  engineOutNow = false;
+  if (mission === "engine") {
+    if (engineCutT > 0) {
+      engineCutT -= dt;
+      engineOutNow = true;
+    } else {
+      engineNextCut -= dt;
+      if (engineNextCut <= 0) {
+        engineCutT = 0.5 + Math.random() * 0.5;
+        engineNextCut = 2.8 + Math.random() * 4;
+        engineOutNow = true;
+        buzz();
+      }
+    }
+  }
+  if (mission === "drip") l.fuel = Math.max(0, l.fuel - 2.4 * dt);
+
+  var thrustOn = (keys["ArrowUp"] || keys["w"] || keys[" "] || touchKeys.thrust) && l.fuel > 0 && !engineOutNow;
+  var rotL = keys["ArrowLeft"] || keys["a"] || touchKeys.left;
+  var rotR = keys["ArrowRight"] || keys["d"] || touchKeys.right;
+
+  if (rotL) l.angle -= 2.4 * dt;
+  if (rotR) l.angle += 2.4 * dt;
+  if (l.angle > Math.PI) l.angle -= Math.PI * 2;
+  if (l.angle < -Math.PI) l.angle += Math.PI * 2;
+
+  /* side-thruster puffs */
+  if ((rotL || rotR) && Math.random() < 0.6) {
+    var side = rotL ? 1 : -1;
+    var c = Math.cos(l.angle), s = Math.sin(l.angle);
+    var px = l.x + (side * 10) * c - (-6) * s;
+    var py = l.y + (side * 10) * s + (-6) * c;
+    spawn(px, py, l.vx + side * (50 + Math.random() * 30), l.vy + (Math.random() - 0.5) * 20,
+      0.25 + Math.random() * 0.15, 1.5, "#cfd8ea", "spark");
+  }
+
+  l.thrusting = !!thrustOn;
+  l.rcsL = !!rotL;
+  l.rcsR = !!rotR;
+  setThrustSound(l.thrusting);
+
+  if (l.thrusting) {
+    // a full tank is dead weight: thrust-to-weight improves as you burn down
+    var loadFactor = 1 + (l.fuel / Math.max(1, l.maxFuel)) * 0.18;
+    var T = 72 / loadFactor;
+    l.vx += Math.sin(l.angle) * T * dt;
+    l.vy -= Math.cos(l.angle) * T * dt;
+    l.fuel = Math.max(0, l.fuel - 13 * dt);
+    /* exhaust particles */
+    if (Math.random() < 0.8) {
+      var ec = Math.cos(l.angle), es = Math.sin(l.angle);
+      var ex = l.x - 16 * -es + (Math.random() - 0.5) * 4;
+      var ey = l.y + 16 * ec + (Math.random() - 0.5) * 4;
+      spawn(ex, ey, l.vx - es * -90 + (Math.random() - 0.5) * 40, l.vy + ec * 90 + (Math.random() - 0.5) * 40,
+        0.2 + Math.random() * 0.2, 1.5, Math.random() < 0.5 ? "#ffd27a" : "#ff9a3d", "spark");
+    }
+    /* ground dust blast when the plume reaches the surface */
+    var gy = terrainHeightAt(l.x);
+    if (gy - l.y < 95 && Math.random() < 0.55) {
+      var ddir = Math.random() < 0.5 ? -1 : 1;
+      spawn(l.x + (Math.random() - 0.5) * 10, gy - 1,
+        ddir * (40 + Math.random() * 95), -(4 + Math.random() * 20),
+        0.5 + Math.random() * 0.45, 2.5 + Math.random() * 2.5,
+        mission === "night" ? "#6a665f" : "#8f8a80", "dust");
+    }
+  }
+
+  l.vy += gravity * dt;
+  updateWind(dt);
+  l.vx += windNow * dt;          // crosswind pushes the lander off course
+  l.x += l.vx * dt;
+  l.y += l.vy * dt;
+
+  /* soft side walls */
+  if (l.x < 14) { l.x = 14; l.vx = Math.abs(l.vx) * 0.4; }
+  if (l.x > W - 14) { l.x = W - 14; l.vx = -Math.abs(l.vx) * 0.4; }
+  if (l.y < 20) { l.y = 20; l.vy = Math.max(l.vy, 0); }
+
+  /* low-altitude warning beep */
+  var alt = terrainHeightAt(l.x) - (l.y + 14);
+  if (alt < 190 && l.vy > SAFE_VY * 1.15 && gtime - lastBeep > 0.4) {
+    lastBeep = gtime;
+    beep(620, 0.08, "square", 0.14);
+  }
+
+  /* collision check */
+  var tips = legTips(l);
+  var body = bodyPoints(l);
+  var contact = false, bodyHit = false;
+  for (var i = 0; i < tips.length; i++) if (tips[i].y >= terrainHeightAt(tips[i].x)) contact = true;
+  for (var b = 0; b < body.length; b++) if (body[b].y >= terrainHeightAt(body[b].x)) { contact = true; bodyHit = true; }
+
+  if (contact) {
+    var pad0 = padAt(tips[0].x), pad1 = padAt(tips[1].x);
+    var onPad = pad0 && pad1 && pad0 === pad1;
+    var angDeg = Math.abs(l.angle * 180 / Math.PI);
+    var okV = l.vy <= SAFE_VY && l.vy >= -5;
+    var okH = Math.abs(l.vx) <= SAFE_VX;
+    var okA = Math.abs(l.angle) <= SAFE_ANG;
+    var good = onPad && okV && okH && okA && !bodyHit;
+
+    touchdown = {
+      vy: l.vy, vx: l.vx, ang: angDeg,
+      pad: onPad ? (pad0.mult) : 0,
+      good: good,
+      reason: !onPad ? "MISSED THE PAD" :
+              bodyHit ? "HULL IMPACT" :
+              !okV ? "DESCENT TOO FAST" :
+              !okH ? "DRIFTING TOO FAST" : "TILTED TOO FAR",
+      bonus: 0
+    };
+
+    setThrustSound(false);
+    if (good) {
+      /* settle onto the pad */
+      l.y = pad0.y - 14;
+      l.vx = 0; l.vy = 0; l.angle = 0; l.down = true;
+      landedAt = gtime;
+      /* touchdown dust ring + kicked-up regolith */
+      addRing(l.x, pad0.y - 2, 8, "195,190,180", true);
+      for (var dd = 0; dd < 16; dd++) {
+        var ddir2 = dd % 2 ? -1 : 1;
+        spawn(l.x + ddir2 * (4 + Math.random() * 7), pad0.y - 1,
+          ddir2 * (35 + Math.random() * 80), -(5 + Math.random() * 22),
+          0.6 + Math.random() * 0.5, 2.5 + Math.random() * 3, "#9b948a", "dust");
+      }
+      landings++;
+      var fuelBonus = 25 + 14 * pad0.mult;
+      var pts = 100 * pad0.mult + Math.round(l.fuel);
+      touchdown.bonus = pts;
+      touchdown.fuelBonus = fuelBonus;
+      score += pts;
+      if (landings > best) { best = landings; saveBest(); }
+      recordDailyProgress();
+      successSound();
+      state = "landed";
+    } else {
+      l.alive = false;
+      explode(l.x, l.y, l.vx, l.vy);
+      crashSound();
+      crashTimer = 1.6;
+      state = "crashed";
+    }
+  }
+
+  /* camera zoom near ground */
+  var targetZ = 1, targetX = 0, targetY = 0;
+  if (alt < 150 && state === "play") {
+    targetZ = 2.1;
+    targetX = Math.max(0, Math.min(W - W / targetZ, l.x - (W / targetZ) / 2));
+    targetY = Math.max(0, Math.min(H - H / targetZ, l.y - (H / targetZ) / 2.4));
+  }
+  var k = 1 - Math.pow(0.0015, dt);
+  cam.z += (targetZ - cam.z) * k;
+  cam.x += (targetX - cam.x) * k;
+  cam.y += (targetY - cam.y) * k;
+}
+
+/* ---------- drawing ---------- */
+function screenSpace() { ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+function worldSpace() {
+  var s = fit.s * cam.z;
+  ctx.setTransform(s * dpr, 0, 0, s * dpr,
+    (fit.ox - cam.x * s) * dpr, (fit.oy - cam.y * s) * dpr);
+}
+
+function drawBackdrop() {
+  screenSpace();
+  ctx.fillStyle = "#05060c";
+  ctx.fillRect(0, 0, fit.cw, fit.ch);
+  /* galaxy wisp */
+  if (nebCanvas) ctx.drawImage(nebCanvas, 0, 0, fit.cw, fit.ch);
+  /* color-varied twinkling stars */
+  for (var i = 0; i < stars.length; i++) {
+    var st = stars[i];
+    var a = 0.35 + 0.65 * Math.abs(Math.sin(gtime * st.sp + st.ph));
+    ctx.globalAlpha = a;
+    ctx.fillStyle = st.col;
+    ctx.fillRect(st.x, st.y, st.r, st.r);
+    if (st.glint && a > 0.72) {
+      ctx.globalAlpha = (a - 0.72) * 2.4;
+      var gl = st.r * 2.6, gx = st.x + st.r / 2, gy = st.y + st.r / 2;
+      ctx.fillRect(gx - gl, gy - 0.4, gl * 2, 0.8);
+      ctx.fillRect(gx - 0.4, gy - gl, 0.8, gl * 2);
+    }
+  }
+  ctx.globalAlpha = 1;
+  drawSatellite();
+  drawEarth();
+}
+
+/* slowly rotating Earth: scrolled equirect strips clipped to the disc */
+function drawEarth() {
+  var ex = fit.cw * 0.82, ey = fit.ch * 0.18, er = Math.min(fit.cw, fit.ch) * 0.062;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(ex, ey, er, 0, Math.PI * 2); ctx.clip();
+  var sc = (er * 4) / 256;               /* strip is twice the disc width */
+  var span = 256 * sc;
+  var off = (gtime * 1.1 * sc) % span;
+  var tx = ex - er - off, ty = ey - er, th2 = er * 2;
+  ctx.drawImage(earthMap, tx, ty, span, th2);
+  ctx.drawImage(earthMap, tx + span, ty, span, th2);
+  /* clouds drift a touch faster than the surface */
+  var off2 = (gtime * 1.7 * sc) % span;
+  var tx2 = ex - er - off2;
+  ctx.globalAlpha = 0.85;
+  ctx.drawImage(earthClouds, tx2, ty, span, th2);
+  ctx.drawImage(earthClouds, tx2 + span, ty, span, th2);
+  ctx.globalAlpha = 1;
+  /* sphere shading */
+  var sh = ctx.createRadialGradient(ex - er * 0.45, ey - er * 0.45, er * 0.1, ex, ey, er * 1.05);
+  sh.addColorStop(0, "rgba(255,255,255,0.22)");
+  sh.addColorStop(0.55, "rgba(10,20,45,0)");
+  sh.addColorStop(1, "rgba(4,8,20,0.55)");
+  ctx.fillStyle = sh;
+  ctx.fillRect(ex - er, ey - er, er * 2, er * 2);
+  /* night side: terminator shadow, then city lights only inside it */
+  var nx2 = ex + er * 0.55, ny2 = ey + er * 0.1, nr2 = er * 1.04;
+  ctx.fillStyle = "rgba(4,5,12,0.86)";
+  ctx.beginPath(); ctx.arc(nx2, ny2, nr2, 0, Math.PI * 2); ctx.fill();
+  ctx.save();
+  ctx.beginPath(); ctx.arc(nx2, ny2, nr2, 0, Math.PI * 2); ctx.clip();
+  ctx.drawImage(earthLights, tx, ty, span, th2);
+  ctx.drawImage(earthLights, tx + span, ty, span, th2);
+  ctx.restore();
+  ctx.restore();
+  /* thin atmosphere rim */
+  ctx.strokeStyle = "rgba(130,185,255,0.35)";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.arc(ex, ey, er + 0.8, 0, Math.PI * 2); ctx.stroke();
+}
+
+/* occasional satellite silhouette drifting across the sky */
+function drawSatellite() {
+  var CYC = 38, DUR = 16;
+  var ci = Math.floor(gtime / CYC);
+  var ct = gtime - ci * CYC;
+  if (ct > DUR) return;
+  var sr = mulberry32(ci * 7919 + 13);
+  var sy = fit.ch * (0.06 + sr() * 0.28);
+  var dir = sr() < 0.5 ? 1 : -1;
+  var p = ct / DUR;
+  var sx = dir > 0 ? -34 + p * (fit.cw + 68) : fit.cw + 34 - p * (fit.cw + 68);
+  var tilt = (sr() - 0.5) * 0.5;
+  ctx.save();
+  ctx.translate(sx, sy + Math.sin(p * 4 + ci) * 6);
+  ctx.rotate(tilt);
+  /* solar panels */
+  ctx.fillStyle = "#101522";
+  ctx.fillRect(-16, -2.5, 11, 5);
+  ctx.fillRect(5, -2.5, 11, 5);
+  ctx.strokeStyle = "rgba(90,110,160,0.5)";
+  ctx.lineWidth = 0.6;
+  ctx.strokeRect(-16, -2.5, 11, 5);
+  ctx.strokeRect(5, -2.5, 11, 5);
+  /* bus with faint sunlit edge */
+  ctx.fillStyle = "#171c29";
+  ctx.fillRect(-4, -3.5, 8, 7);
+  ctx.fillStyle = "rgba(190,205,235,0.5)";
+  ctx.fillRect(-4, -3.5, 8, 1);
+  /* blinking nav light */
+  if (Math.sin(gtime * 5) > 0.3) {
+    ctx.fillStyle = "#ff6a5a";
+    ctx.fillRect(-0.8, -5.2, 1.6, 1.6);
+  }
+  ctx.restore();
+}
+
+function nightActive() {
+  return mission === "night" && state !== "title";
+}
+
+function drawTerrain() {
+  var night = nightActive();
+  worldSpace();
+  if (terrainTex) {
+    ctx.drawImage(terrainTex, 0, 0, W * TT, (H + 80) * TT, 0, 0, W, H + 80);
+  }
+
+  /* landing pads as metal platforms */
+  var blink = Math.sin(gtime * 6) > 0;
+  var mono = "'Courier New',monospace";
+  for (var p = 0; p < pads.length; p++) {
+    var pad = pads[p];
+    var pw = pad.x2 - pad.x1;
+    /* anchor skirt sunk into the rock */
+    ctx.fillStyle = night ? "#161a24" : "#222838";
+    ctx.beginPath();
+    ctx.moveTo(pad.x1 + 2, pad.y);
+    ctx.lineTo(pad.x2 - 2, pad.y);
+    ctx.lineTo(pad.x2 - 7, pad.y + 7);
+    ctx.lineTo(pad.x1 + 7, pad.y + 7);
+    ctx.closePath();
+    ctx.fill();
+    /* deck plate */
+    var dg = ctx.createLinearGradient(0, pad.y - 4, 0, pad.y + 3);
+    dg.addColorStop(0, night ? "#49536b" : "#707d9c");
+    dg.addColorStop(0.45, night ? "#333b4f" : "#4a5570");
+    dg.addColorStop(1, night ? "#20242f" : "#2c3346");
+    ctx.fillStyle = dg;
+    ctx.fillRect(pad.x1 - 2, pad.y - 4, pw + 4, 7);
+    /* sunlit top edge */
+    ctx.fillStyle = night ? "#8b97b5" : "#ccd6ee";
+    ctx.fillRect(pad.x1 - 2, pad.y - 4, pw + 4, 1.1);
+    /* plating seams */
+    ctx.fillStyle = "rgba(10,12,20,0.5)";
+    for (var sx2 = pad.x1 + 10; sx2 < pad.x2 - 4; sx2 += 12) {
+      ctx.fillRect(sx2, pad.y - 3.4, 1, 5.6);
+    }
+    /* beacon masts with blinking lights */
+    var lx = [pad.x1 + 3, pad.x2 - 3];
+    for (var b2 = 0; b2 < 2; b2++) {
+      ctx.fillStyle = night ? "#3b4254" : "#596079";
+      ctx.fillRect(lx[b2] - 0.8, pad.y - 10, 1.6, 6.4);
+      if (blink) {
+        var bg2 = ctx.createRadialGradient(lx[b2], pad.y - 11, 0.4, lx[b2], pad.y - 11, 9);
+        bg2.addColorStop(0, "rgba(140,255,170,0.7)");
+        bg2.addColorStop(1, "rgba(140,255,170,0)");
+        ctx.fillStyle = bg2;
+        ctx.beginPath(); ctx.arc(lx[b2], pad.y - 11, 9, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.fillStyle = blink ? "#6cff8f" : "#1d4f2a";
+      ctx.beginPath(); ctx.arc(lx[b2], pad.y - 11, 2.2, 0, Math.PI * 2); ctx.fill();
+    }
+    /* number plate */
+    var pcx = (pad.x1 + pad.x2) / 2;
+    ctx.fillStyle = "rgba(8,10,18,0.9)";
+    ctx.fillRect(pcx - 22, pad.y + 8, 44, 13);
+    ctx.strokeStyle = night ? "#3b4254" : "#596079";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(pcx - 22, pad.y + 8, 44, 13);
+    ctx.fillStyle = "#9fe8b2";
+    ctx.font = "700 10px " + mono;
+    ctx.textAlign = "center";
+    ctx.fillText("P" + (p + 1) + " x" + pad.mult, pcx, pad.y + 18);
+  }
+}
+
+/* darkness overlay with a lamp radius around the lander (night missions) */
+function drawNightOverlay() {
+  if (!nightActive() || !lander) return;
+  screenSpace();
+  var s = fit.s * cam.z;
+  var sx = fit.ox + (lander.x - cam.x) * s;
+  var sy = fit.oy + (lander.y - cam.y) * s;
+  var r = Math.max(60, 165 * s);
+  var g = ctx.createRadialGradient(sx, sy, r * 0.22, sx, sy, r);
+  g.addColorStop(0, "rgba(3,4,9,0)");
+  g.addColorStop(0.6, "rgba(3,4,9,0.45)");
+  g.addColorStop(1, "rgba(3,4,9,0.9)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, fit.cw, fit.ch);
+}
+
+/* dramatic landing lamp: cone of light from the lander down to the surface (night) */
+function drawLamp() {
+  if (!nightActive() || !lander || !lander.alive) return;
+  var l = lander;
+  worldSpace();
+  var gy = terrainHeightAt(l.x);
+  var hgt = gy - l.y;
+  if (hgt <= 6) return;
+  var spread = 9 + hgt * 0.34;
+  var lg = ctx.createLinearGradient(0, l.y + 8, 0, gy);
+  lg.addColorStop(0, "rgba(255,238,190,0.28)");
+  lg.addColorStop(1, "rgba(255,238,190,0.05)");
+  ctx.beginPath();
+  ctx.moveTo(l.x - 4, l.y + 8);
+  ctx.lineTo(l.x + 4, l.y + 8);
+  ctx.lineTo(l.x + spread, gy);
+  ctx.lineTo(l.x - spread, gy);
+  ctx.closePath();
+  ctx.fillStyle = lg;
+  ctx.fill();
+  /* lit pool on the ground */
+  ctx.fillStyle = "rgba(255,238,190,0.1)";
+  ctx.beginPath();
+  ctx.ellipse(l.x, gy, spread, spread * 0.22, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/* pad lights that stay visible through the darkness */
+function drawPadLights() {
+  if (!nightActive()) return;
+  worldSpace();
+  var blink = Math.sin(gtime * 6) > 0;
+  for (var p = 0; p < pads.length; p++) {
+    var pad = pads[p];
+    var lx = [pad.x1 + 3, pad.x2 - 3];
+    for (var i = 0; i < 2; i++) {
+      var gl = ctx.createRadialGradient(lx[i], pad.y - 5, 0.5, lx[i], pad.y - 5, 16);
+      gl.addColorStop(0, blink ? "rgba(140,255,170,0.85)" : "rgba(140,255,170,0.35)");
+      gl.addColorStop(1, "rgba(140,255,170,0)");
+      ctx.fillStyle = gl;
+      ctx.beginPath(); ctx.arc(lx[i], pad.y - 5, 16, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = blink ? "#9dffb6" : "#2e6b3c";
+      ctx.beginPath(); ctx.arc(lx[i], pad.y - 5, 2.2, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+
+function drawLander() {
+  if (!lander || !lander.alive) return;
+  var l = lander;
+  worldSpace();
+  ctx.save();
+  ctx.translate(l.x, l.y);
+  ctx.rotate(l.angle);
+
+  /* shock compression right after touchdown */
+  var comp = l.down ? Math.max(0, 1 - (gtime - landedAt) * 3.2) * 3 : 0;
+  var fy = 14 - comp;
+
+  /* main engine flame: outer + inner cone with glow */
+  if (l.thrusting) {
+    var fl = 16 + Math.random() * 14;
+    var fw = 5.5 + Math.random() * 2;
+    var og = ctx.createLinearGradient(0, 11, 0, 11 + fl);
+    og.addColorStop(0, "rgba(255,150,45,0.95)");
+    og.addColorStop(0.65, "rgba(255,92,32,0.5)");
+    og.addColorStop(1, "rgba(255,60,24,0)");
+    ctx.beginPath();
+    ctx.moveTo(-fw, 11);
+    ctx.quadraticCurveTo(-fw * 0.5, 11 + fl * 0.6, 0, 11 + fl);
+    ctx.quadraticCurveTo(fw * 0.5, 11 + fl * 0.6, fw, 11);
+    ctx.closePath();
+    ctx.fillStyle = og;
+    ctx.fill();
+    var ig = ctx.createLinearGradient(0, 11, 0, 11 + fl * 0.6);
+    ig.addColorStop(0, "#ffffff");
+    ig.addColorStop(0.4, "#fff3c4");
+    ig.addColorStop(1, "rgba(255,220,130,0)");
+    ctx.beginPath();
+    ctx.moveTo(-fw * 0.45, 11);
+    ctx.lineTo(0, 11 + fl * 0.58);
+    ctx.lineTo(fw * 0.45, 11);
+    ctx.closePath();
+    ctx.fillStyle = ig;
+    ctx.fill();
+    var gg = ctx.createRadialGradient(0, 13, 1, 0, 13, 11);
+    gg.addColorStop(0, "rgba(255,195,95,0.3)");
+    gg.addColorStop(1, "rgba(255,195,95,0)");
+    ctx.fillStyle = gg;
+    ctx.beginPath(); ctx.arc(0, 13, 11, 0, Math.PI * 2); ctx.fill();
+  }
+
+  /* articulated legs: primary strut, shock strut, foot pad */
+  ctx.lineWidth = 1.8;
+  ctx.strokeStyle = "#b8c0d2";
+  ctx.beginPath();
+  ctx.moveTo(-6, 4); ctx.lineTo(-11, fy);
+  ctx.moveTo(6, 4);  ctx.lineTo(11, fy);
+  ctx.stroke();
+  ctx.lineWidth = 1.1;
+  ctx.strokeStyle = "#7d8498";
+  ctx.beginPath();
+  ctx.moveTo(-3, 9); ctx.lineTo(-10.2, fy - 1);
+  ctx.moveTo(3, 9);  ctx.lineTo(10.2, fy - 1);
+  ctx.stroke();
+  ctx.fillStyle = "#cfd6e6";
+  ctx.fillRect(-13.6, fy - 1, 5.4, 1.9);
+  ctx.fillRect(8.2, fy - 1, 5.4, 1.9);
+
+  /* descent stage: gold-foil wrap with side shading */
+  ctx.fillStyle = goldPat || "#c08f2e";
+  ctx.fillRect(-9, 2, 18, 7);
+  var sg = ctx.createLinearGradient(-9, 0, 9, 0);
+  sg.addColorStop(0, "rgba(255,245,210,0.3)");
+  sg.addColorStop(0.45, "rgba(0,0,0,0)");
+  sg.addColorStop(1, "rgba(30,18,0,0.4)");
+  ctx.fillStyle = sg;
+  ctx.fillRect(-9, 2, 18, 7);
+  ctx.strokeStyle = "#5e440f";
+  ctx.lineWidth = 0.8;
+  ctx.strokeRect(-9, 2, 18, 7);
+
+  /* engine nozzle bell */
+  ctx.beginPath();
+  ctx.moveTo(-3.5, 9); ctx.lineTo(3.5, 9); ctx.lineTo(5.6, 13); ctx.lineTo(-5.6, 13);
+  ctx.closePath();
+  var ng = ctx.createLinearGradient(-5.6, 0, 5.6, 0);
+  ng.addColorStop(0, "#7c8498");
+  ng.addColorStop(0.5, "#3d4252");
+  ng.addColorStop(1, "#666d80");
+  ctx.fillStyle = ng;
+  ctx.fill();
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(-4.6, 12, 9.2, 1);
+
+  /* ascent stage hull */
+  ctx.beginPath();
+  ctx.moveTo(0, -13);
+  ctx.lineTo(-9, -3);
+  ctx.lineTo(-8, 2);
+  ctx.lineTo(8, 2);
+  ctx.lineTo(9, -3);
+  ctx.closePath();
+  var hg = ctx.createLinearGradient(-9, 0, 9, 0);
+  hg.addColorStop(0, "#e6ecf7");
+  hg.addColorStop(0.5, "#c3cce0");
+  hg.addColorStop(1, "#95a0ba");
+  ctx.fillStyle = hg;
+  ctx.fill();
+  ctx.strokeStyle = "#596073";
+  ctx.lineWidth = 1.1;
+  ctx.stroke();
+  /* panel seam + antenna */
+  ctx.strokeStyle = "rgba(70,78,96,0.6)";
+  ctx.lineWidth = 0.7;
+  ctx.beginPath(); ctx.moveTo(-8.6, -3); ctx.lineTo(8.6, -3); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, -13); ctx.lineTo(0, -17); ctx.stroke();
+  ctx.fillStyle = "#cfd6e6";
+  ctx.beginPath(); ctx.arc(0, -17, 1, 0, Math.PI * 2); ctx.fill();
+  /* RCS quad blocks */
+  ctx.fillStyle = "#7d8498";
+  ctx.fillRect(-10.4, -7, 2.4, 3.6);
+  ctx.fillRect(8, -7, 2.4, 3.6);
+
+  /* crisp RCS cone puffs */
+  if (l.rcsL || l.rcsR) {
+    var side = l.rcsL ? 1 : -1;
+    var rl = 5 + Math.random() * 3;
+    ctx.beginPath();
+    ctx.moveTo(side * 10.4, -6.4);
+    ctx.lineTo(side * (10.4 + rl), -5.2 + (Math.random() - 0.5) * 2);
+    ctx.lineTo(side * 10.4, -3.8);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(225,235,252,0.85)";
+    ctx.fill();
+  }
+
+  /* window with glint */
+  var wg = ctx.createRadialGradient(-1, -6, 0.4, 0, -5, 3.6);
+  wg.addColorStop(0, "#6f93c8");
+  wg.addColorStop(0.5, "#2c436b");
+  wg.addColorStop(1, "#131f36");
+  ctx.fillStyle = wg;
+  ctx.beginPath(); ctx.arc(0, -5, 3.4, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#9fc0ff";
+  ctx.lineWidth = 0.9;
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,0.85)";
+  ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.arc(0, -5, 2.1, -2.5, -1.5); ctx.stroke();
+
+  ctx.restore();
+}
+
+/* expanding dust / shock rings */
+function drawRings() {
+  if (!rings.length) return;
+  worldSpace();
+  for (var i = 0; i < rings.length; i++) {
+    var r = rings[i];
+    var k = r.t / r.life;
+    var rad = r.r1 + k * 62;
+    ctx.strokeStyle = "rgba(" + r.color + "," + ((1 - k) * 0.6).toFixed(3) + ")";
+    ctx.lineWidth = (3 - 2 * k) / cam.z;
+    ctx.beginPath();
+    ctx.ellipse(r.x, r.y, rad, rad * r.flat, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+function drawParticles() {
+  worldSpace();
+  for (var i = 0; i < particles.length; i++) {
+    var p = particles[i];
+    var a = Math.max(0, p.t / p.life);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = p.color;
+    if (p.kind === "chunk") {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.fillRect(-p.size / 2, -p.size / 3, p.size, p.size * 0.66);
+      /* lit edge on tumbling debris */
+      ctx.fillStyle = "rgba(230,238,252,0.6)";
+      ctx.fillRect(-p.size / 2, -p.size / 3, p.size, 0.8);
+      ctx.restore();
+    } else if (p.kind === "dust" || p.kind === "smoke") {
+      ctx.globalAlpha = a * (p.kind === "smoke" ? 0.3 : 0.4);
+      var gr2 = p.size * (1 + (1 - a) * 1.4);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, gr2, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- HUD ---------- */
+function fmt(n) { return (n < 0 ? "-" : " ") + Math.abs(n).toFixed(0).padStart(3, "0"); }
+
+/* slim retro console gauge: 270-degree dial, color-coded bands, needle */
+function drawGauge(cx, cy, r, frac, bands, label, valText) {
+  var a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
+  ctx.fillStyle = "rgba(8,10,18,0.78)";
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "rgba(140,160,210,0.5)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  /* colored safe bands */
+  for (var b = 0; b < bands.length; b++) {
+    ctx.strokeStyle = bands[b][2];
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r - 4, a0 + (a1 - a0) * bands[b][0], a0 + (a1 - a0) * bands[b][1]);
+    ctx.stroke();
+  }
+  /* tick marks */
+  ctx.strokeStyle = "rgba(207,216,234,0.55)";
+  ctx.lineWidth = 1;
+  for (var t = 0; t <= 4; t++) {
+    var ta = a0 + (a1 - a0) * t / 4;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(ta) * (r - 8), cy + Math.sin(ta) * (r - 8));
+    ctx.lineTo(cx + Math.cos(ta) * (r - 4), cy + Math.sin(ta) * (r - 4));
+    ctx.stroke();
+  }
+  /* needle */
+  var f = Math.max(0, Math.min(1, frac));
+  var na = a0 + (a1 - a0) * f;
+  ctx.strokeStyle = "#e8eefb";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(cx - Math.cos(na) * 4, cy - Math.sin(na) * 4);
+  ctx.lineTo(cx + Math.cos(na) * (r - 7), cy + Math.sin(na) * (r - 7));
+  ctx.stroke();
+  ctx.fillStyle = "#9fb2d8";
+  ctx.beginPath(); ctx.arc(cx, cy, 2.2, 0, Math.PI * 2); ctx.fill();
+  /* label + value */
+  ctx.textAlign = "center";
+  ctx.font = "700 9px 'Courier New',monospace";
+  ctx.fillStyle = "#9fb2d8";
+  ctx.fillText(label, cx, cy + r - 5);
+  ctx.font = "700 10px 'Courier New',monospace";
+  ctx.fillStyle = "#e8eefb";
+  ctx.fillText(valText, cx, cy + r + 12);
+}
+
+/* instrument bezel framing the zoomed proximity view */
+function drawBezel() {
+  if (state === "title" || state === "gameover") return;
+  var a = Math.min(1, Math.max(0, (cam.z - 1.3) / 0.55));
+  if (a <= 0.02) return;
+  screenSpace();
+  ctx.globalAlpha = a;
+  var m = 10, L = 34;
+  /* edge vignette */
+  var vg = ["rgba(4,6,12,0.5)", "rgba(4,6,12,0)"];
+  var eg = ctx.createLinearGradient(0, 0, 0, 26);
+  eg.addColorStop(0, vg[0]); eg.addColorStop(1, vg[1]);
+  ctx.fillStyle = eg; ctx.fillRect(0, 0, fit.cw, 26);
+  eg = ctx.createLinearGradient(0, fit.ch, 0, fit.ch - 26);
+  eg.addColorStop(0, vg[0]); eg.addColorStop(1, vg[1]);
+  ctx.fillStyle = eg; ctx.fillRect(0, fit.ch - 26, fit.cw, 26);
+  /* frame line */
+  ctx.strokeStyle = "rgba(140,160,210,0.45)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(m, m, fit.cw - m * 2, fit.ch - m * 2);
+  /* corner brackets */
+  ctx.strokeStyle = "rgba(207,216,234,0.8)";
+  ctx.lineWidth = 2.5;
+  var cs = [[m, m, 1, 1], [fit.cw - m, m, -1, 1], [m, fit.ch - m, 1, -1], [fit.cw - m, fit.ch - m, -1, -1]];
+  for (var i = 0; i < 4; i++) {
+    var c = cs[i];
+    ctx.beginPath();
+    ctx.moveTo(c[0] + c[2] * L, c[1]);
+    ctx.lineTo(c[0], c[1]);
+    ctx.lineTo(c[0], c[1] + c[3] * L);
+    ctx.stroke();
+  }
+  ctx.font = "700 10px 'Courier New',monospace";
+  ctx.textAlign = "left";
+  ctx.fillStyle = "rgba(159,178,216,0.9)";
+  ctx.fillText("PROX CAM 02 - " + (cam.z).toFixed(1) + "X", m + 10, m + 20);
+  var rec = Math.sin(gtime * 4) > 0;
+  ctx.textAlign = "right";
+  ctx.fillStyle = rec ? "#ff5f5f" : "rgba(255,95,95,0.3)";
+  ctx.fillText("LIVE", fit.cw - m - 10, m + 20);
+  ctx.globalAlpha = 1;
+}
+
+function drawHUD() {
+  if (!lander) return;
+  screenSpace();
+  var l = lander;
+  var alt = Math.max(0, terrainHeightAt(l.x) - (l.y + 14));
+  var mono = "'Courier New',monospace";
+  var x = 18, y = 26, lh = 20;
+  ctx.textAlign = "left";
+  ctx.font = "700 14px " + mono;
+
+  ctx.fillStyle = "#cfd8ea";
+  ctx.fillText("ALT  " + fmt(alt / 5) + " m", x, y);
+
+  var vOK = l.vy <= SAFE_VY;
+  ctx.fillStyle = vOK ? "#6cff8f" : "#ff5f5f";
+  ctx.fillText("VSPD " + fmt(l.vy / 5) + " m/s", x, y + lh);
+
+  // crosswind readout: direction arrows scale with gust strength
+  if (windBase !== 0) {
+    var ws = Math.abs(windNow);
+    var arrows = ws < 4 ? 1 : ws < 9 ? 2 : 3;
+    var glyph = (windNow < 0 ? "\u25c0" : "\u25b6").repeat(arrows);
+    ctx.fillStyle = ws > 11 ? "#ff5f5f" : ws > 6 ? "#ffd166" : "#9fb4d8";
+    ctx.fillText("WIND " + glyph, x, y + lh * 4);
+  }
+
+  var hOK = Math.abs(l.vx) <= SAFE_VX;
+  ctx.fillStyle = hOK ? "#6cff8f" : "#ff5f5f";
+  ctx.fillText("HSPD " + fmt(l.vx / 5) + " m/s", x, y + lh * 2);
+
+  var aDeg = l.angle * 180 / Math.PI;
+  var aOK = Math.abs(l.angle) <= SAFE_ANG;
+  ctx.fillStyle = aOK ? "#6cff8f" : "#ff5f5f";
+  ctx.fillText("ROT  " + fmt(aDeg) + " deg", x, y + lh * 3);
+
+  /* right column */
+  var rx = fit.cw - 18;
+  ctx.textAlign = "right";
+  ctx.fillStyle = "#cfd8ea";
+  ctx.fillText("LEVEL " + level, rx, y);
+  ctx.fillText("SCORE " + score, rx, y + lh);
+  ctx.fillText("LANDINGS " + landings, rx, y + lh * 2);
+  ctx.fillStyle = "#9fb2d8";
+  ctx.fillText("BEST " + best, rx, y + lh * 3);
+
+  /* fuel bar */
+  var bw = 180, bh = 10, bx = rx - bw, by = y + lh * 4 - 4;
+  ctx.textAlign = "right";
+  ctx.fillStyle = l.fuel / l.maxFuel < 0.25 ? "#ff5f5f" : "#cfd8ea";
+  ctx.fillText("FUEL", bx - 10, by + bh - 1);
+  ctx.strokeStyle = "#5e6678";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(bx, by, bw, bh);
+  var fr = l.fuel / l.maxFuel;
+  ctx.fillStyle = fr < 0.25 ? "#ff5f5f" : (fr < 0.5 ? "#ffd27a" : "#6cff8f");
+  ctx.fillRect(bx + 1, by + 1, (bw - 2) * fr, bh - 2);
+
+  /* retro console gauges: vertical speed + fuel, with safe bands */
+  var gy2 = y + lh * 3 + 44 + (windBase !== 0 ? 20 : 0);
+  var vMS = l.vy / 5;                       /* shown in m/s; dial spans -10..+30 */
+  var vFrac = (vMS + 10) / 40;
+  var vSafe = (SAFE_VY / 5 + 10) / 40;
+  drawGauge(46, gy2, 26, vFrac,
+    [[0, vSafe, "#2e7a44"], [vSafe, 1, "#8a2d2d"]],
+    "VSPD", vMS.toFixed(1));
+  drawGauge(114, gy2, 26, fr,
+    [[0, 0.25, "#8a2d2d"], [0.25, 0.5, "#8a6b2d"], [0.5, 1, "#2e7a44"]],
+    "FUEL", String(Math.round(l.fuel)));
+
+  /* mission banner chip */
+  ctx.textAlign = "center";
+  ctx.font = "700 12px " + mono;
+  var mTxt = (daily ? "DAILY " + todayStr() + " - " : "") + MISSIONS[mission].name;
+  var mW = ctx.measureText(mTxt).width + 28;
+  ctx.fillStyle = "rgba(8,10,18,0.7)";
+  ctx.fillRect(fit.cw / 2 - mW / 2, 10, mW, 22);
+  ctx.strokeStyle = "rgba(140,160,210,0.45)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(fit.cw / 2 - mW / 2, 10, mW, 22);
+  ctx.fillStyle = mission === "normal" ? "#9fb2d8" : "#ffd27a";
+  ctx.fillText(mTxt, fit.cw / 2, 25);
+
+  /* engine cutout warning */
+  if (engineOutNow && state === "play" && !paused) {
+    ctx.font = "700 18px " + mono;
+    ctx.fillStyle = Math.sin(gtime * 24) > 0 ? "#ff5f5f" : "#8a2d2d";
+    ctx.fillText("ENGINE CUTOUT", fit.cw / 2, 52);
+  }
+
+  /* mute hint */
+  ctx.textAlign = "right";
+  ctx.font = "700 10px " + mono;
+  ctx.fillStyle = "rgba(207,216,234,0.5)";
+  ctx.fillText(muted ? "SOUND OFF - M" : "SOUND ON - M", fit.cw - 18, fit.ch - 46);
+
+  /* mission announcement banner at the start of each descent */
+  if (state === "play" && !paused && missionTimer > 0) {
+    var bA = Math.max(0, Math.min(1, missionTimer / 0.6));
+    var bcx = fit.cw / 2, bcy = fit.ch * 0.3;
+    ctx.globalAlpha = bA * 0.72;
+    var bandG = ctx.createLinearGradient(0, bcy - 52, 0, bcy + 64);
+    bandG.addColorStop(0, "rgba(8,10,18,0)");
+    bandG.addColorStop(0.2, "rgba(8,10,18,0.85)");
+    bandG.addColorStop(0.8, "rgba(8,10,18,0.85)");
+    bandG.addColorStop(1, "rgba(8,10,18,0)");
+    ctx.fillStyle = bandG;
+    ctx.fillRect(0, bcy - 52, fit.cw, 116);
+    ctx.globalAlpha = bA;
+    ctx.textAlign = "center";
+    /* eyebrow + rules */
+    ctx.font = "700 11px " + mono;
+    ctx.fillStyle = "#9fb2d8";
+    ctx.fillText("- MISSION PROFILE -", bcx, bcy - 34);
+    ctx.font = "700 34px " + mono;
+    ctx.fillStyle = mission === "normal" ? "#cfd8ea" : "#ffd27a";
+    ctx.fillText(MISSIONS[mission].name, bcx, bcy);
+    var tw2 = ctx.measureText(MISSIONS[mission].name).width / 2 + 24;
+    ctx.strokeStyle = "rgba(159,178,216,0.6)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(bcx - tw2, bcy + 10); ctx.lineTo(bcx + tw2, bcy + 10);
+    ctx.stroke();
+    ctx.font = "700 14px " + mono;
+    ctx.fillStyle = "#cfd8ea";
+    ctx.fillText(MISSIONS[mission].desc, bcx, bcy + 30);
+    ctx.fillStyle = "#9fb2d8";
+    ctx.fillText("LEVEL " + level + (daily ? "  -  DAILY CHALLENGE" : ""), bcx, bcy + 52);
+    ctx.globalAlpha = 1;
+  }
+
+  if (paused && state === "play") {
+    /* dim overlay */
+    ctx.fillStyle = "rgba(3,4,8,0.6)";
+    ctx.fillRect(0, 0, fit.cw, fit.ch);
+    panel("PAUSED", ["PRESS P TO RESUME"], "#cfd8ea");
+  }
+}
+
+/* ---------- on-screen touch buttons ---------- */
+function drawTouchControls() {
+  if (!isTouch || state !== "play" || paused) return;
+  screenSpace();
+  var btns = touchButtons();
+  var mono = "'Courier New',monospace";
+  for (var i = 0; i < btns.length; i++) {
+    var b = btns[i];
+    var active = touchKeys[b.id];
+    ctx.globalAlpha = active ? 0.55 : 0.28;
+    ctx.fillStyle = "#1a2030";
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = active ? "#6cff8f" : "#8d94a8";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = active ? "#6cff8f" : "#cfd8ea";
+    ctx.beginPath();
+    if (b.id === "left") {
+      ctx.moveTo(b.x + 10, b.y - 14); ctx.lineTo(b.x - 12, b.y); ctx.lineTo(b.x + 10, b.y + 14);
+    } else if (b.id === "right") {
+      ctx.moveTo(b.x - 10, b.y - 14); ctx.lineTo(b.x + 12, b.y); ctx.lineTo(b.x - 10, b.y + 14);
+    } else {
+      ctx.moveTo(b.x, b.y - 16); ctx.lineTo(b.x - 14, b.y + 12); ctx.lineTo(b.x + 14, b.y + 12);
+    }
+    ctx.closePath(); ctx.fill();
+    if (b.id === "thrust") {
+      ctx.font = "700 10px " + mono;
+      ctx.textAlign = "center";
+      ctx.fillText("THRUST", b.x, b.y + b.r - 10);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function panel(title, lines, color) {
+  screenSpace();
+  var cx = fit.cw / 2, cy = fit.ch / 2;
+  var w = 460, h = 90 + lines.length * 24;
+  ctx.fillStyle = "rgba(8,10,18,0.85)";
+  ctx.strokeStyle = "rgba(140,160,210,0.5)";
+  ctx.lineWidth = 1;
+  ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
+  ctx.strokeRect(cx - w / 2, cy - h / 2, w, h);
+  ctx.textAlign = "center";
+  ctx.font = "700 26px 'Courier New',monospace";
+  ctx.fillStyle = color || "#cfd8ea";
+  ctx.fillText(title, cx, cy - h / 2 + 42);
+  ctx.font = "700 14px 'Courier New',monospace";
+  for (var i = 0; i < lines.length; i++) {
+    ctx.fillStyle = "#cfd8ea";
+    ctx.fillText(lines[i], cx, cy - h / 2 + 74 + i * 24);
+  }
+}
+
+function statLines(td) {
+  return [
+    "VSPD " + (td.vy / 5).toFixed(1) + " m/s   HSPD " + (td.vx / 5).toFixed(1) + " m/s   ROT " + td.ang.toFixed(1) + " deg"
+  ];
+}
+
+function drawStateOverlays() {
+  var mono = "'Courier New',monospace";
+  if (state === "title") {
+    screenSpace();
+    var cx = fit.cw / 2, cy = fit.ch / 2;
+    ctx.textAlign = "center";
+    ctx.font = "700 54px " + mono;
+    ctx.fillStyle = "#e8eefb";
+    ctx.fillText("LUNAR LANDER", cx, cy - 120);
+    ctx.font = "700 14px " + mono;
+    ctx.fillStyle = "#9fb2d8";
+    ctx.fillText("— A CLASSIC DESCENT —", cx, cy - 90);
+    ctx.fillStyle = "#cfd8ea";
+    var lines = [
+      "THRUST ........ UP / W / SPACE",
+      "ROTATE ........ LEFT-RIGHT / A-D",
+      "MUTE .......... M        PAUSE ... P",
+      "",
+      "LAND GENTLY AND UPRIGHT ON THE FLAT PADS.",
+      "SMALLER PADS PAY MORE. EACH LANDING: NEW,",
+      "HARDER MOON AND A FUEL BONUS. CRASH ENDS THE RUN."
+    ];
+    for (var i = 0; i < lines.length; i++) ctx.fillText(lines[i], cx, cy - 46 + i * 24);
+    var pulse = Math.sin(gtime * 4) > 0;
+    ctx.fillStyle = pulse ? "#6cff8f" : "#3a7a4b";
+    ctx.font = "700 18px " + mono;
+    ctx.fillText("PRESS ENTER TO LAUNCH", cx, cy + 142);
+    ctx.fillStyle = "#ffd27a";
+    ctx.font = "700 14px " + mono;
+    ctx.fillText("PRESS D FOR DAILY CHALLENGE - " + todayStr(), cx, cy + 170);
+    ctx.fillStyle = "#9fb2d8";
+    ctx.font = "700 13px " + mono;
+    ctx.fillText("BEST RUN · " + best + " LANDING" + (best === 1 ? "" : "S"), cx, cy + 198);
+    var dLand = dailyBest.date === todayStr() ? dailyBest.landings : 0;
+    ctx.fillText("DAILY BEST · " + dLand + " LANDING" + (dLand === 1 ? "" : "S"), cx, cy + 220);
+    if (isTouch) {
+      ctx.fillStyle = "#cfd8ea";
+      ctx.fillText("TAP ANYWHERE TO LAUNCH", cx, cy + 246);
+    }
+  }
+  else if (state === "landed" && touchdown) {
+    panel("TOUCHDOWN · PAD x" + touchdown.pad,
+      statLines(touchdown).concat([
+        "+" + touchdown.bonus + " PTS   +" + touchdown.fuelBonus + " FUEL NEXT LEVEL",
+        "",
+        "PRESS ENTER FOR LEVEL " + (level + 1)
+      ]), "#6cff8f");
+  }
+  else if (state === "crashed" && touchdown) {
+    screenSpace();
+    ctx.textAlign = "center";
+    ctx.font = "700 30px " + mono;
+    ctx.fillStyle = "#ff5f5f";
+    ctx.fillText("CRASHED — " + touchdown.reason, fit.cw / 2, fit.ch * 0.3);
+    ctx.font = "700 14px " + mono;
+    ctx.fillStyle = "#cfd8ea";
+    ctx.fillText(statLines(touchdown)[0], fit.cw / 2, fit.ch * 0.3 + 30);
+  }
+  else if (state === "gameover" && touchdown) {
+    panel("RUN OVER — " + touchdown.reason,
+      statLines(touchdown).concat([
+        "LANDINGS " + landings + "   SCORE " + score + "   BEST " + best,
+        (daily ? "DAILY CHALLENGE " + todayStr() + " · BEST " + (dailyBest.date === todayStr() ? dailyBest.landings : 0) :
+          (landings >= best && landings > 0 ? "NEW BEST RUN" : "")),
+        "PRESS ENTER OR R TO FLY AGAIN · D FOR DAILY"
+      ]), "#ff5f5f");
+  }
+}
+
+/* ---------- main loop ---------- */
+var lastT = 0;
+function frame(ts) {
+  var dt = Math.min(0.033, (ts - lastT) / 1000 || 0.016);
+  lastT = ts;
+  update(dt);
+  drawBackdrop();
+  drawTerrain();
+  drawParticles();
+  drawRings();
+  drawLander();
+  drawNightOverlay();
+  drawLamp();
+  drawPadLights();
+  drawBezel();
+  if (state !== "title") drawHUD();
+  drawTouchControls();
+  /* crash white-out flash */
+  if (flashT > 0) {
+    screenSpace();
+    ctx.globalAlpha = Math.max(0, flashT / 0.3) * 0.75;
+    ctx.fillStyle = "#fff4e2";
+    ctx.fillRect(0, 0, fit.cw, fit.ch);
+    ctx.globalAlpha = 1;
+  }
+  drawStateOverlays();
+  requestAnimationFrame(frame);
+}
+
+/* volume slider */
+var volEl = document.getElementById("vol");
+if (volEl) {
+  volEl.value = String(volume);
+  volEl.addEventListener("input", function () {
+    volume = Math.max(0, Math.min(1, parseFloat(volEl.value) || 0));
+    applyVolume();
+  });
+  /* keep keyboard focus on the game */
+  volEl.addEventListener("change", function () { volEl.blur(); });
+  volEl.addEventListener("keydown", function (e) { e.preventDefault(); volEl.blur(); });
+}
+
+/* boot */
+makeGoldFoil();
+buildEarth();
+resize();
+genTerrain(levelCfg(1));   /* scenic terrain behind the title */
+requestAnimationFrame(frame);
+</script>
+<a href="index.html" class="hub-link" style="bottom:14px;left:14px">&lt; ARCADE</a>
+<style>
+.hub-link{position:fixed;z-index:10000;font:700 11px/1 "Courier New",monospace;letter-spacing:2px;
+color:#cfd8ea;background:rgba(10,12,20,.72);border:1px solid rgba(140,160,210,.4);
+padding:8px 12px;border-radius:999px;text-decoration:none;opacity:.55;transition:opacity .15s;cursor:pointer;}
+.hub-link:hover{opacity:1;color:#fff;}
+</style>
+</body>
+</html>

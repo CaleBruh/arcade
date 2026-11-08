@@ -1,0 +1,2608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SKI — Endless Downhill</title>
+<style>
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#eef3fa;}
+canvas{display:block;position:fixed;inset:0;touch-action:none;}
+.vol-wrap{position:fixed;right:14px;bottom:44px;z-index:10000;display:flex;align-items:center;gap:7px;
+font:700 10px/1 "Courier New",monospace;letter-spacing:1px;color:#51607c;background:rgba(246,249,253,.72);
+border:1px solid rgba(140,160,210,.4);border-radius:999px;padding:6px 10px;opacity:.55;transition:opacity .15s;}
+.vol-wrap:hover{opacity:1;}
+.vol-wrap input{width:72px;height:4px;accent-color:#2d6fd1;cursor:pointer;margin:0;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="vol-wrap"><span>VOL</span><input id="vol" type="range" min="0" max="1" step="0.05" aria-label="volume"></div>
+<!-- arcade-shared:start -->
+<script>
+/* Arcade shared runtime.
+   Single source of truth for cross-game boilerplate. build-arcade.py injects
+   this into every game between the arcade-shared markers (and keeps the copies
+   in sync on each run) — edit THIS file, then run: python3 build-arcade.py */
+(function () {
+  "use strict";
+
+  /* ---- safe storage: never throws (Safari private mode, disabled storage) ---- */
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, String(v)); return true; } catch (e) { return false; } },
+    remove: function (k) { try { localStorage.removeItem(k); } catch (e) {} },
+    num: function (k) { var n = parseFloat(store.get(k)); return isFinite(n) ? n : 0; },
+    json: function (k) { try { return JSON.parse(store.get(k)); } catch (e) { return null; } }
+  };
+
+  /* ---- audio: one wrap of the AudioContext constructor gives us both
+     a tab-hidden auto-suspend and an arcade-wide master volume ----
+     Every context's .destination is rerouted through a shared gain node, so
+     the settings panel's master volume applies to every game with no per-game
+     wiring; the games' own volume sliders keep working underneath it.
+     Only contexts *we* suspended are resumed, so a game's own
+     mute-by-suspend behaviour is left alone. */
+  var contexts = [];
+  var autoSuspended = [];
+  var masters = [];
+  function masterLevel() {
+    if (store.get("arcade_master_muted") === "1") return 0;
+    var v = parseFloat(store.get("arcade_master"));
+    return isFinite(v) ? Math.min(Math.max(v, 0), 1) : 1;
+  }
+  function applyMaster() {
+    var lvl = masterLevel();
+    masters.forEach(function (g) {
+      try { g.gain.setTargetAtTime(lvl, g.context.currentTime, 0.02); } catch (e) {}
+    });
+  }
+  ["AudioContext", "webkitAudioContext"].forEach(function (name) {
+    var Orig = window[name];
+    if (!Orig) return;
+    function Patched() {
+      var ctx = arguments.length
+        ? new (Function.prototype.bind.apply(Orig, [null].concat([].slice.call(arguments))))()
+        : new Orig();
+      contexts.push(ctx);
+      try {
+        var realDest = ctx.destination;
+        var master = ctx.createGain();
+        master.gain.value = masterLevel();
+        master.connect(realDest);
+        Object.defineProperty(ctx, "destination", {
+          get: function () { return master; },
+          configurable: true
+        });
+        masters.push(master);
+      } catch (e) { /* master volume is best-effort */ }
+      return ctx;
+    }
+    Patched.prototype = Orig.prototype;
+    window[name] = Patched;
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      contexts.forEach(function (ctx) {
+        if (ctx.state === "running") {
+          autoSuspended.push(ctx);
+          ctx.suspend().catch(function () {});
+        }
+      });
+    } else {
+      autoSuspended.splice(0).forEach(function (ctx) {
+        if (ctx.state === "suspended") ctx.resume().catch(function () {});
+      });
+    }
+  });
+
+  /* ---- reduced motion: tame decorative CSS animation, expose a flag the
+     games consult for canvas effects (shake, flashes, particles). The OS
+     setting is the default; the settings panel can override it either way
+     (arcade_rm: "auto" | "on" | "off"). ---- */
+  var rmQuery = window.matchMedia ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+  function reducedMotion() {
+    var o = store.get("arcade_rm");
+    if (o === "on") return true;
+    if (o === "off") return false;
+    return !!(rmQuery && rmQuery.matches);
+  }
+  var rmStyle = document.createElement("style");
+  (document.head || document.documentElement).appendChild(rmStyle);
+  function syncRMStyle() {
+    rmStyle.textContent = reducedMotion()
+      ? "*,*::before,*::after{animation-duration:.01ms !important;" +
+        "animation-iteration-count:1 !important;transition-duration:.01ms !important;" +
+        "scroll-behavior:auto !important}"
+      : "";
+  }
+  syncRMStyle();
+  if (rmQuery && rmQuery.addEventListener) rmQuery.addEventListener("change", syncRMStyle);
+
+  /* ---- on-screen touch controls ----
+     Created on demand by a game calling arcade.touch.* at the end of its own
+     script. Nothing is shown unless the pointer is coarse (or ?touch=1 forces
+     them for testing). Key buttons synthesize keydown/keyup on window+document
+     with both .key and .code set, so games keep their existing handlers. */
+  var touchOn = (window.matchMedia && matchMedia("(pointer: coarse)").matches) ||
+                /[?&]touch=1\b/.test(location.search);
+  var touchLayer = null;
+  function ensureLayer() {
+    if (!touchLayer) {
+      touchLayer = document.createElement("div");
+      touchLayer.id = "arcade-touch";
+      touchLayer.style.cssText =
+        "position:fixed;inset:0;z-index:15000;pointer-events:none;" +
+        "user-select:none;-webkit-user-select:none";
+      (document.body || document.documentElement).appendChild(touchLayer);
+    }
+    return touchLayer;
+  }
+  function mkEl(style, size) {
+    var el = document.createElement("div");
+    el.style.cssText =
+      "position:absolute;pointer-events:auto;touch-action:none;box-sizing:border-box;" +
+      "width:" + size + "px;height:" + size + "px;border-radius:50%;" +
+      "background:rgba(140,160,210,.13);border:1px solid rgba(140,160,210,.45);" +
+      "color:rgba(232,236,248,.85);display:flex;align-items:center;justify-content:center;" +
+      "font:700 13px/1 system-ui,sans-serif;letter-spacing:1px;" + (style || "");
+    return el;
+  }
+  function sendKey(type, key, code) {
+    var ev = new KeyboardEvent(type, { key: key, code: code, bubbles: true, cancelable: true });
+    window.dispatchEvent(ev);
+    document.dispatchEvent(ev);
+  }
+  function touchButton(o) {
+    if (!touchOn) return null;
+    var el = mkEl(o.style, o.size || 54);
+    el.textContent = o.label || "";
+    if (o.label) el.dataset.k = o.label;
+    var timer = 0;
+    function down(e) {
+      e.preventDefault();
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
+      el.style.background = "rgba(140,160,210,.34)";
+      if (o.onDown) o.onDown();
+      if (o.repeat) timer = setInterval(function () { if (o.onDown) o.onDown(); }, o.repeat);
+    }
+    function up() {
+      el.style.background = "rgba(140,160,210,.13)";
+      if (timer) { clearInterval(timer); timer = 0; }
+      if (o.onUp) o.onUp();
+    }
+    el.addEventListener("pointerdown", down);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+    ensureLayer().appendChild(el);
+    return el;
+  }
+  function keyButton(o) {
+    var held = false;
+    return touchButton({
+      label: o.label, style: o.style, size: o.size, repeat: o.repeat,
+      onDown: function () { held = true; sendKey("keydown", o.key, o.code || o.key); },
+      onUp: function () { if (held) { held = false; sendKey("keyup", o.key, o.code || o.key); } }
+    });
+  }
+  function dpad(o) {
+    if (!touchOn) return;
+    var s = o.size || 52, g = o.gap || 6;
+    var bx = o.left != null ? o.left : 16, by = o.bottom != null ? o.bottom : 16;
+    function at(cx, cy) { return "left:" + cx + "px;bottom:" + cy + "px"; }
+    var m = o.map;
+    keyButton({ label: "▲", key: m.up.key, code: m.up.code, size: s, repeat: o.repeat, style: at(bx + s + g, by + 2 * (s + g)) });
+    keyButton({ label: "◀", key: m.left.key, code: m.left.code, size: s, repeat: o.repeat, style: at(bx, by + s + g) });
+    keyButton({ label: "▶", key: m.right.key, code: m.right.code, size: s, repeat: o.repeat, style: at(bx + 2 * (s + g), by + s + g) });
+    keyButton({ label: "▼", key: m.down.key, code: m.down.code, size: s, repeat: o.repeat, style: at(bx + s + g, by) });
+  }
+  function arrowDpad(o) {
+    o = o || {};
+    o.map = {
+      up: { key: "ArrowUp", code: "ArrowUp" }, down: { key: "ArrowDown", code: "ArrowDown" },
+      left: { key: "ArrowLeft", code: "ArrowLeft" }, right: { key: "ArrowRight", code: "ArrowRight" }
+    };
+    return dpad(o);
+  }
+  function stick(o) {
+    if (!touchOn) return null;
+    var size = o.size || 124;
+    var base = mkEl(o.style, size);
+    if (o.label) base.dataset.k = o.label;
+    var knob = document.createElement("div");
+    knob.style.cssText =
+      "position:absolute;width:44%;height:44%;border-radius:50%;pointer-events:none;" +
+      "background:rgba(140,160,210,.4);left:50%;top:50%;transform:translate(-50%,-50%)";
+    base.appendChild(knob);
+    var active = false;
+    function setKnob(nx, ny) {
+      knob.style.left = (50 + nx * 32) + "%";
+      knob.style.top = (50 + ny * 32) + "%";
+    }
+    function report(e) {
+      var r = base.getBoundingClientRect();
+      var dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+      var dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+      var mag = Math.hypot(dx, dy);
+      if (mag > 1) { dx /= mag; dy /= mag; }
+      setKnob(dx, dy);
+      if (o.onMove) o.onMove(dx, dy, true);
+    }
+    base.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      try { base.setPointerCapture(e.pointerId); } catch (err) {}
+      active = true;
+      report(e);
+    });
+    base.addEventListener("pointermove", function (e) { if (active) report(e); });
+    function end() {
+      if (!active) return;
+      active = false;
+      setKnob(0, 0);
+      if (o.onMove) o.onMove(0, 0, false);
+    }
+    base.addEventListener("pointerup", end);
+    base.addEventListener("pointercancel", end);
+    ensureLayer().appendChild(base);
+    return base;
+  }
+
+  /* ---- play-time heartbeat: the hub sorts and labels cards from this ----
+     Standalone pages identify themselves by filename; inside the all-in-one
+     bundle the overlay stamps data-arcade-game on the iframe. The smoke
+     harness's srcdoc frames carry no stamp, so test runs never pollute it. */
+  var GAME_ID = (function () {
+    try {
+      if (window.frameElement && window.frameElement.dataset.arcadeGame)
+        return window.frameElement.dataset.arcadeGame;
+      if (window.frameElement) return null; /* unstamped frame (smoke harness) */
+    } catch (e) { return null; }
+    var p = location.pathname.split("/").pop();
+    return /\.html$/.test(p) && ["index.html", "arcade.html", "smoke.html"].indexOf(p) === -1 ? p : null;
+  })();
+  if (GAME_ID) {
+    var visSince = document.hidden ? 0 : Date.now();
+    var metaFlush = function () {
+      var add = 0, now = Date.now();
+      if (visSince) { add = (now - visSince) / 1000; visSince = document.hidden ? 0 : now; }
+      else if (add === 0) return; /* hidden and idle: not "playing" */
+      var meta = store.json("arcade_meta_v1") || {};
+      var g = meta[GAME_ID] || (meta[GAME_ID] = { secs: 0 });
+      g.secs = Math.round((g.secs || 0) + add);
+      g.last = now;
+      store.set("arcade_meta_v1", JSON.stringify(meta));
+    };
+    metaFlush();
+    setInterval(metaFlush, 15000);
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { metaFlush(); visSince = 0; }
+      else visSince = Date.now();
+    });
+    window.addEventListener("pagehide", metaFlush);
+  }
+
+  /* ---- settings panel: gear chip on the right edge; Escape closes.
+     Master volume and motion apply to every game through the shared
+     runtime, so this is the same panel with the same behaviour everywhere. */
+  var panel = null, chip = null;
+  function settingsOpen() { return !!(panel && panel.style.display !== "none"); }
+  function motionLabel() {
+    var o = store.get("arcade_rm");
+    return o === "on" ? "MOTION: REDUCED" : o === "off" ? "MOTION: FULL" : "MOTION: AUTO";
+  }
+  function buildPanel() {
+    if (panel) return;
+    panel = document.createElement("div");
+    panel.id = "arcade-settings";
+    panel.style.cssText =
+      "position:fixed;inset:0;z-index:16000;display:none;" +
+      "background:rgba(4,6,12,.55);user-select:none;-webkit-user-select:none";
+    var card = document.createElement("div");
+    card.style.cssText =
+      "position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);" +
+      "min-width:260px;padding:22px 26px;border-radius:14px;" +
+      "background:rgba(14,17,30,.96);border:1px solid rgba(140,160,210,.4);" +
+      "color:#e8ecf8;font:13px/1.5 system-ui,sans-serif";
+    card.innerHTML =
+      '<div style="font:700 13px/1 system-ui;letter-spacing:3px;margin-bottom:16px">ARCADE SETTINGS</div>' +
+      '<label style="font-size:11px;letter-spacing:2px;color:#8b94b0">MASTER VOLUME</label><br>' +
+      '<input id="arc-set-vol" type="range" min="0" max="100" style="width:100%;margin:6px 0 14px">' +
+      '<button id="arc-set-mute" style="' + btnCss() + '"></button> ' +
+      '<button id="arc-set-rm" style="' + btnCss() + '"></button>' +
+      '<div style="font-size:11px;color:#8b94b0;margin-top:14px">Applies to every game. ' +
+      'Per-game volume controls still work underneath.<br>Esc closes.</div>';
+    panel.appendChild(card);
+    panel.addEventListener("pointerdown", function (e) { if (e.target === panel) toggleSettings(false); });
+    (document.body || document.documentElement).appendChild(panel);
+
+    var vol = card.querySelector("#arc-set-vol");
+    var mute = card.querySelector("#arc-set-mute");
+    var rm = card.querySelector("#arc-set-rm");
+    function syncUI() {
+      var v = parseFloat(store.get("arcade_master"));
+      vol.value = Math.round((isFinite(v) ? Math.min(Math.max(v, 0), 1) : 1) * 100);
+      mute.textContent = store.get("arcade_master_muted") === "1" ? "UNMUTE" : "MUTE";
+      rm.textContent = motionLabel();
+    }
+    vol.addEventListener("input", function () {
+      store.set("arcade_master", vol.value / 100);
+      store.set("arcade_master_muted", "0");
+      applyMaster(); syncUI();
+    });
+    mute.addEventListener("click", function () {
+      store.set("arcade_master_muted", store.get("arcade_master_muted") === "1" ? "0" : "1");
+      applyMaster(); syncUI();
+    });
+    rm.addEventListener("click", function () {
+      var o = store.get("arcade_rm");
+      store.set("arcade_rm", o === "on" ? "off" : o === "off" ? "auto" : "on");
+      syncRMStyle(); syncUI();
+    });
+    panel.syncUI = syncUI;
+  }
+  function btnCss() {
+    return "font:700 11px/1 system-ui;letter-spacing:2px;color:#cfd8ea;cursor:pointer;" +
+      "background:rgba(140,160,210,.12);border:1px solid rgba(140,160,210,.4);" +
+      "padding:8px 12px;border-radius:999px";
+  }
+  function toggleSettings(show) {
+    buildPanel();
+    var to = show != null ? show : !settingsOpen();
+    panel.style.display = to ? "block" : "none";
+    if (to) panel.syncUI();
+  }
+  function mountChip() {
+    if (chip || !document.body) return;
+    chip = document.createElement("div");
+    chip.id = "arcade-settings-chip";
+    chip.title = "Arcade settings";
+    chip.textContent = "⚙";
+    chip.style.cssText =
+      "position:fixed;right:8px;top:50%;transform:translateY(-50%);z-index:15990;" +
+      "width:30px;height:30px;border-radius:50%;display:flex;align-items:center;" +
+      "justify-content:center;cursor:pointer;font-size:15px;color:#cfd8ea;" +
+      "background:rgba(10,12,20,.6);border:1px solid rgba(140,160,210,.35);" +
+      "opacity:.4;transition:opacity .15s;user-select:none;-webkit-user-select:none";
+    chip.addEventListener("mouseenter", function () { chip.style.opacity = "1"; });
+    chip.addEventListener("mouseleave", function () { chip.style.opacity = ".4"; });
+    chip.addEventListener("click", function () { toggleSettings(); });
+    document.body.appendChild(chip);
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", mountChip);
+  } else {
+    mountChip();
+  }
+  /* capture-phase: while the panel is open, keys belong to the panel */
+  window.addEventListener("keydown", function (e) {
+    if (!settingsOpen()) return;
+    if (e.key === "Escape") toggleSettings(false);
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  }, true);
+  window.addEventListener("keyup", function (e) {
+    if (settingsOpen()) e.stopImmediatePropagation();
+  }, true);
+
+  window.arcade = {
+    store: store,
+    reducedMotion: reducedMotion,
+    settings: { open: function () { toggleSettings(true); }, close: function () { toggleSettings(false); } },
+    /* clamp a rAF delta so a backgrounded tab doesn't produce a huge step */
+    clampDt: function (dt, max) { return Math.min(Math.max(dt, 0), max || 0.1); },
+    /* daily-challenge helpers: one date key and one seed, stable all day,
+       shared by every game so "today's run" means the same thing everywhere */
+    dailyKey: function () {
+      var d = new Date(), m = d.getMonth() + 1, da = d.getDate();
+      return d.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (da < 10 ? "0" : "") + da;
+    },
+    dailySeed: function () {
+      var d = new Date();
+      return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+    },
+    /* mulberry32: tiny deterministic PRNG for seeded runs */
+    seededRand: function (seed) {
+      var a = seed >>> 0;
+      return function () {
+        a = (a + 0x6D2B79F5) >>> 0;
+        var t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    },
+    touch: {
+      available: touchOn,
+      sendKey: sendKey,
+      button: touchButton,
+      key: keyButton,
+      dpad: dpad,
+      arrowDpad: arrowDpad,
+      stick: stick
+    },
+    /* Run recorder — shared by the ghost racer and replay trophies.
+
+       A game calls start()/sample()/finish() and gets both a local ghost and,
+       when the arcade server happens to be serving the page, a shared one.
+       Every server call is best-effort: these games are static files that must
+       keep working opened straight off the disk, so a failed fetch is silently
+       ignored rather than surfaced. */
+    run: (function () {
+      var RATE_MS = 100;            // 10 Hz is plenty to interpolate a ghost
+      var MAX_FRAMES = 4000;        // ~6.5 minutes; matches the server cap
+      var cur = null;
+
+      function localKey(game) { return 'arcade_ghost_' + game; }
+
+      function post(path, body) {
+        try {
+          return fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' },
+                               body: JSON.stringify(body) })
+            .then(function (r) { return r.json(); })
+            .catch(function () { return null; });
+        } catch (e) { return Promise.resolve(null); }
+      }
+
+      return {
+        start: function (game, seed) {
+          cur = { game: game, seed: seed === undefined ? null : seed, frames: [], last: -1e9 };
+        },
+        /* Call every frame; it throttles itself. Pass the few numbers needed to
+           redraw the ghost — position, lane, whatever the game interpolates. */
+        sample: function (t) {
+          if (!cur || cur.frames.length >= MAX_FRAMES) return;
+          if (t - cur.last < RATE_MS / 1000) return;
+          cur.last = t;
+          cur.frames.push(Array.prototype.slice.call(arguments, 1).map(function (v) {
+            return Math.round((Number(v) || 0) * 100) / 100;   // 2dp keeps ghosts small
+          }));
+        },
+        recording: function () { return !!cur; },
+        /* Keep the run if it beat the stored ghost, and offer it to the server. */
+        finish: function (score, name) {
+          if (!cur || !cur.frames.length) { cur = null; return Promise.resolve(null); }
+          var ghost = { game: cur.game, seed: cur.seed, frames: cur.frames,
+                        score: Number(score) || 0,
+                        name: name || localStorage.getItem('arcade_name_v1') || 'player' };
+          cur = null;
+          try {
+            var prevRaw = localStorage.getItem(localKey(ghost.game));
+            var prev = prevRaw ? JSON.parse(prevRaw) : null;
+            if (!prev || ghost.score > prev.score) {
+              localStorage.setItem(localKey(ghost.game), JSON.stringify(ghost));
+            }
+          } catch (e) { /* quota or bad JSON — the server copy still matters */ }
+          return post('/api/ghost', ghost);
+        },
+        discard: function () { cur = null; },
+        /* Best available ghost: the server's if reachable, else the local one. */
+        best: function (game) {
+          var local = null;
+          try {
+            var raw = localStorage.getItem(localKey(game));
+            if (raw) local = JSON.parse(raw);
+          } catch (e) {}
+          try {
+            return fetch('/api/ghosts?game=' + encodeURIComponent(game))
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                var remote = d && d.list && d.list[0];
+                if (remote && (!local || remote.score > local.score)) return remote;
+                return local;
+              })
+              .catch(function () { return local; });
+          } catch (e) { return Promise.resolve(local); }
+        },
+        /* Read a ghost at an arbitrary time, interpolating between samples. */
+        at: function (ghost, t) {
+          if (!ghost || !ghost.frames || !ghost.frames.length) return null;
+          var f = ghost.frames, i = Math.floor(t / (RATE_MS / 1000));
+          if (i >= f.length - 1) return f[f.length - 1];
+          if (i < 0) return f[0];
+          var a = f[i], b = f[i + 1], k = (t / (RATE_MS / 1000)) - i, out = [];
+          for (var j = 0; j < a.length; j++) out.push(a[j] + (b[j] - a[j]) * k);
+          return out;
+        }
+      };
+    })()
+  };
+})();
+</script>
+<!-- arcade-shared:end -->
+<script>
+'use strict';
+/* ============================================================
+   SKI — a SkiFree-style endless downhill run.
+   Single file, canvas, WebAudio. No external dependencies.
+   ============================================================ */
+
+var canvas = document.getElementById('c');
+var ctx = canvas.getContext('2d');
+var W = 0, H = 0, DPR = 1;
+function resize(){
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ---------------- constants ---------------- */
+var PPM = 12;                 // world pixels per meter
+var ANGLE_DEG = [0, 18, 36, 58, 78];   // magnitude by |angle index|
+var MAX_AI = 4;
+var GRAV = 760;               // z gravity for jumps
+var BASE_SPEED = 230;
+var SPEED_GAIN = 160;         // extra speed earned by 4000 m
+var TUCK = 1.33;
+var MONSTER1_AT = 2000;       // meters
+var MONSTER2_AT = 5200;       // meters
+var CATCH_R = 27;
+var SKIER_Y_FRAC = 0.30;      // skier sits in upper third of screen
+
+/* ---------------- persistence ---------------- */
+var best = 0;
+try { best = parseInt(localStorage.getItem('ski_best'), 10) || 0; } catch (e) {}
+function saveBest(){
+  try { localStorage.setItem('ski_best', String(Math.floor(best))); } catch (e) {}
+}
+var daily = null;
+try {
+  var _dj = JSON.parse(localStorage.getItem('ski_daily'));
+  if (_dj && typeof _dj.date === 'string' && typeof _dj.dist === 'number') daily = _dj;
+} catch (e) {}
+function saveDaily(){
+  try { localStorage.setItem('ski_daily', JSON.stringify(daily)); } catch (e) {}
+}
+function dateStr(){
+  var d = new Date();
+  var mo = String(d.getMonth() + 1); if (mo.length < 2) mo = '0' + mo;
+  var da = String(d.getDate()); if (da.length < 2) da = '0' + da;
+  return d.getFullYear() + '-' + mo + '-' + da;
+}
+function hashStr(s){
+  var h = 2166136261;
+  for (var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h | 0;
+}
+
+/* ---------------- audio ---------------- */
+var AC = null, master = null, hissGain = null, windGain = null, muted = false;
+var VOL = 0.7;
+try {
+  var _v = parseFloat(localStorage.getItem('arcade_volume'));
+  if (isFinite(_v)) VOL = Math.min(1, Math.max(0, _v));
+} catch (e) {}
+function applyVolume(){
+  if (master) master.gain.value = muted ? 0 : VOL;
+}
+function initAudio(){
+  if (AC) return;
+  try {
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    master = AC.createGain();
+    master.gain.value = muted ? 0 : VOL;
+    master.connect(AC.destination);
+    var len = Math.floor(AC.sampleRate * 1);
+    var buf = AC.createBuffer(1, len, AC.sampleRate);
+    var d = buf.getChannelData(0);
+    for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    var src = AC.createBufferSource();
+    src.buffer = buf; src.loop = true;
+    var bp = AC.createBiquadFilter();
+    bp.type = 'bandpass'; bp.frequency.value = 720; bp.Q.value = 0.6;
+    hissGain = AC.createGain(); hissGain.gain.value = 0;
+    src.connect(bp); bp.connect(hissGain); hissGain.connect(master);
+    src.start();
+    // blizzard wind: low rumbling noise loop, gain driven by storm intensity
+    var wsrc = AC.createBufferSource();
+    wsrc.buffer = buf; wsrc.loop = true;
+    var wlp = AC.createBiquadFilter();
+    wlp.type = 'lowpass'; wlp.frequency.value = 340;
+    windGain = AC.createGain(); windGain.gain.value = 0;
+    wsrc.connect(wlp); wlp.connect(windGain); windGain.connect(master);
+    wsrc.start();
+  } catch (e) { AC = null; }
+}
+function setMute(m){
+  muted = m;
+  applyVolume();
+}
+function noiseBurst(dur, freq, vol, type){
+  if (!AC) return;
+  var len = Math.floor(AC.sampleRate * dur);
+  var buf = AC.createBuffer(1, len, AC.sampleRate);
+  var d = buf.getChannelData(0);
+  for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  var src = AC.createBufferSource(); src.buffer = buf;
+  var f = AC.createBiquadFilter(); f.type = type || 'lowpass'; f.frequency.value = freq;
+  var g = AC.createGain(); g.gain.value = vol;
+  src.connect(f); f.connect(g); g.connect(master);
+  src.start();
+}
+function tone(freq, freqEnd, dur, vol, type){
+  if (!AC) return;
+  var o = AC.createOscillator(), g = AC.createGain();
+  o.type = type || 'sine';
+  var t = AC.currentTime;
+  o.frequency.setValueAtTime(freq, t);
+  o.frequency.exponentialRampToValueAtTime(Math.max(20, freqEnd), t + dur);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(master);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+function sfxJump(){ tone(300, 760, 0.25, 0.18, 'triangle'); noiseBurst(0.15, 1800, 0.10, 'highpass'); }
+function sfxLand(){ noiseBurst(0.18, 500, 0.30); tone(120, 60, 0.12, 0.15, 'sine'); }
+function sfxTumble(){ noiseBurst(0.35, 700, 0.35); tone(200, 70, 0.3, 0.2, 'sawtooth'); }
+function sfxGate(){ tone(880, 1320, 0.12, 0.14, 'sine'); }
+function sfxTrick(){ tone(520, 1040, 0.18, 0.16, 'square'); }
+function sfxRoar(loud){
+  if (!AC) return;
+  var t = AC.currentTime, dur = 1.3, v = loud ? 0.5 : 0.28;
+  for (var k = 0; k < 2; k++){
+    var o = AC.createOscillator(), g = AC.createGain(), f = AC.createBiquadFilter();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(150 + k * 7, t);
+    o.frequency.exponentialRampToValueAtTime(52, t + dur);
+    f.type = 'lowpass'; f.frequency.value = 520;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(v, t + 0.12);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(f); f.connect(g); g.connect(master);
+    o.start(t); o.stop(t + dur + 0.05);
+  }
+  noiseBurst(0.9, 300, 0.22);
+}
+function sfxChomp(){ noiseBurst(0.12, 900, 0.4); tone(90, 45, 0.16, 0.35, 'sine'); }
+function sfxWind(){
+  noiseBurst(1.4, 500, 0.3);
+  tone(160, 420, 1.1, 0.10, 'sawtooth');
+  tone(90, 240, 1.3, 0.08, 'triangle');
+}
+function sfxChime(n){
+  if (!AC) return;
+  var t = AC.currentTime;
+  var fr = [660, 880, 1100, 1320];
+  var cnt = Math.max(2, Math.min(4, n));
+  for (var i = 0; i < cnt; i++){
+    var o = AC.createOscillator(), g = AC.createGain();
+    o.type = 'sine';
+    o.frequency.value = fr[i];
+    var dly = i * 0.09;
+    g.gain.setValueAtTime(0.0001, t + dly);
+    g.gain.exponentialRampToValueAtTime(0.18, t + dly + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dly + 0.4);
+    o.connect(g); g.connect(master);
+    o.start(t + dly); o.stop(t + dly + 0.45);
+  }
+}
+
+/* ---------------- volume slider ---------------- */
+var volEl = document.getElementById('vol');
+if (volEl){
+  volEl.value = String(VOL);
+  volEl.addEventListener('input', function(){
+    VOL = Math.min(1, Math.max(0, parseFloat(volEl.value) || 0));
+    try { localStorage.setItem('arcade_volume', String(VOL)); } catch (e) {}
+    initAudio();
+    applyVolume();
+  });
+  volEl.addEventListener('change', function(){ volEl.blur(); });
+  volEl.addEventListener('keydown', function(e){ e.preventDefault(); e.stopPropagation(); volEl.blur(); });
+}
+
+/* ---------------- rng helpers ---------------- */
+function mulberry32(a){
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function rnd(a, b){ return a + Math.random() * (b - a); }
+
+/* ---------------- game state ---------------- */
+var state = 'title';   // title | play | eaten | over
+var player, obs, ramps, gates, npcs, monsters, floats, trail, scarf;
+var patches;                 // ice / powder surface zones
+var wind = 0, windTarget = 0, windT = 0, surface = 'snow';
+var camX = 0, camY = 0, nextSpawnY = 0;
+var dist = 0, style = 0, combo = 0, bestCombo = 0, gatesPassed = 0, tricksDone = 0;
+var eatT = 0, eater = null, newBest = false;
+var gTime = 0, shake = 0;
+var paused = false;
+var trickChain = 0, chainTimer = 0, flourishT = 0;
+var blizzState = 'none', blizzA = 0, blizzT = 0, blizzDur = 0, nextBlizzAt = 800, windDir = 1;
+var flakes = [];
+var dailyMode = false, dailySeed = 0, todayStr = dateStr();
+
+function resetRun(){
+  player = {
+    wx: 0, wy: 0, ai: 0, speed: 0,
+    z: 0, vz: 0, air: false,
+    spin: 0, spinning: false, spins: 0, pendStyle: 0,
+    tumble: 0, invuln: 0, tuck: false, prevWy: 0
+  };
+  obs = []; ramps = []; gates = []; npcs = []; monsters = []; floats = []; trail = [];
+  patches = []; wind = 0; windTarget = 0; windT = 0; surface = 'snow';
+  scarf = [];
+  for (var i = 0; i < 9; i++) scarf.push({ x: W / 2, y: H * SKIER_Y_FRAC - 14 });
+  camX = player.wx - W / 2;
+  camY = player.wy - H * SKIER_Y_FRAC;
+  nextSpawnY = player.wy + 160;
+  dist = 0; style = 0; combo = 0; bestCombo = 0; gatesPassed = 0; tricksDone = 0;
+  eatT = 0; eater = null; newBest = false; shake = 0;
+  paused = false;
+  trickChain = 0; chainTimer = 0; flourishT = 0;
+  blizzState = 'none'; blizzA = 0; blizzT = 0;
+  nextBlizzAt = 800 + rnd(0, 200);
+  windDir = Math.random() < 0.5 ? -1 : 1;
+  flakes = [];
+  todayStr = dateStr();
+  if (dailyMode) dailySeed = hashStr(todayStr);
+}
+resetRun();
+
+function endRun(){
+  state = 'over';
+  if (dist > best){ best = Math.floor(dist); newBest = true; }
+  saveBest();
+  if (dailyMode){
+    var fd = Math.floor(dist);
+    if (!daily || daily.date !== todayStr){ daily = { date: todayStr, dist: fd }; saveDaily(); }
+    else if (fd > daily.dist){ daily.dist = fd; saveDaily(); }
+  }
+}
+function startDaily(){
+  dailyMode = true;
+  resetRun();
+  state = 'play';
+}
+window.addEventListener('beforeunload', function(){
+  if (dist > best){ best = Math.floor(dist); }
+  saveBest();
+});
+
+/* ---------------- input ---------------- */
+var keys = {};
+var steerHeld = 0, steerTimer = 0;
+window.addEventListener('keydown', function(e){
+  var k = e.key;
+  if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].indexOf(k) >= 0) e.preventDefault();
+  initAudio();
+  if (AC && AC.state === 'suspended') AC.resume();
+  if (keys[k]) return;
+  keys[k] = true;
+
+  if (k === 'm' || k === 'M'){ setMute(!muted); return; }
+  if ((k === 'p' || k === 'P') && state === 'play'){ paused = !paused; return; }
+
+  if (state === 'title'){
+    if (k === 'Enter' || k === ' '){ dailyMode = false; resetRun(); state = 'play'; }
+    if (k === 'd' || k === 'D'){ startDaily(); }
+    return;
+  }
+  if (state === 'over'){
+    if (k === 'Enter' || k === 'r' || k === 'R'){ resetRun(); state = 'play'; }
+    if (k === 't' || k === 'T'){ state = 'title'; }
+    return;
+  }
+  if (state !== 'play' || paused) return;
+
+  if (k === 'ArrowLeft' || k === 'a' || k === 'A'){ steer(-1); steerHeld = -1; steerTimer = 0.28; }
+  if (k === 'ArrowRight' || k === 'd' || k === 'D'){ steer(1); steerHeld = 1; steerTimer = 0.28; }
+  if ((k === 'ArrowUp' || k === ' ') && player.air && !player.spinning){
+    player.spinning = true; player.spin = 0; sfxTrick();
+  }
+});
+window.addEventListener('keyup', function(e){
+  keys[e.key] = false;
+  var l = keys['ArrowLeft'] || keys['a'] || keys['A'];
+  var r = keys['ArrowRight'] || keys['d'] || keys['D'];
+  if (!l && !r) steerHeld = 0;
+  else steerHeld = r ? 1 : -1;
+});
+function steer(d){
+  if (player.tumble > 0) return;
+  // on ice the edge skates: every other input slips away
+  if (surface === 'ice' && !player.air && Math.random() < 0.45){
+    floats.push({ x: player.wx, y: player.wy - 20, t: 0, txt: 'SLIP' });
+    return;
+  }
+  player.ai = Math.max(-MAX_AI, Math.min(MAX_AI, player.ai + d));
+}
+
+/* ---------------- touch input ---------------- */
+var isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+var touchSteer = 0, touchTuck = false, swipeStartY = 0, swipeDone = true;
+function updateTouchState(e){
+  touchTuck = e.touches.length >= 2;
+  if (e.touches.length >= 1 && state === 'play' && !paused){
+    var d = (e.touches[0].clientX < W / 2) ? -1 : 1;
+    if (d !== touchSteer){ touchSteer = d; steer(d); steerTimer = 0.28; }
+  } else {
+    touchSteer = 0;
+  }
+}
+canvas.addEventListener('touchstart', function(e){
+  e.preventDefault();
+  initAudio();
+  if (AC && AC.state === 'suspended') AC.resume();
+  var t0 = e.changedTouches[0];
+  if (state === 'title'){
+    var cy = H * 0.5;
+    if (t0 && Math.abs(t0.clientX - W / 2) < 230 && t0.clientY > cy + 84 && t0.clientY < cy + 118){
+      startDaily();
+    } else {
+      dailyMode = false; resetRun(); state = 'play';
+    }
+    return;
+  }
+  if (state === 'over'){ resetRun(); state = 'play'; return; }
+  if (state === 'play' && !paused && t0){
+    swipeStartY = t0.clientY; swipeDone = false;
+  }
+  updateTouchState(e);
+}, { passive: false });
+canvas.addEventListener('touchmove', function(e){
+  e.preventDefault();
+  if (!swipeDone && e.touches.length >= 1 && swipeStartY - e.touches[0].clientY > 70){
+    swipeDone = true;
+    if (state === 'play' && !paused && player.air && !player.spinning){
+      player.spinning = true; player.spin = 0; sfxTrick();
+    }
+  }
+  updateTouchState(e);
+}, { passive: false });
+canvas.addEventListener('touchend', function(e){
+  e.preventDefault();
+  updateTouchState(e);
+}, { passive: false });
+canvas.addEventListener('touchcancel', function(e){
+  updateTouchState(e);
+}, { passive: false });
+
+/* ---------------- spawning ---------------- */
+function spawnRow(y){
+  // in daily mode each row rolls from a date-seeded PRNG so the mountain
+  // layout (obstacle / ramp / gate / npc sequence) is the same for everyone today
+  var R = dailyMode ? mulberry32((dailySeed ^ Math.imul(Math.round(y), 2654435761)) | 0) : Math.random;
+  var rr = function(a, b){ return a + R() * (b - a); };
+  var cx = player.wx;
+  var span = Math.max(W, 900) * 1.3;
+  var n = (R() < 0.7) ? 1 + Math.floor(R() * 2) : 0;
+  for (var i = 0; i < n; i++){
+    var x = cx + rr(-span, span);
+    var r = R();
+    if (r < 0.55) obs.push({ t: 'tree', x: x, y: y + rr(-30, 30), r: 13, s: rr(0.8, 1.35) });
+    else if (r < 0.73) obs.push({ t: 'rock', x: x, y: y + rr(-30, 30), r: 12, s: rr(0.8, 1.2) });
+    else if (r < 0.86) obs.push({ t: 'stump', x: x, y: y + rr(-30, 30), r: 8, s: rr(0.8, 1.1) });
+    // moguls: not a crash, a launch. Hit one fast and it kicks you airborne.
+    else obs.push({ t: 'mogul', x: x, y: y + rr(-30, 30), r: 15, s: rr(0.9, 1.3) });
+  }
+  if (R() < 0.085){
+    ramps.push({ x: cx + rr(-span * 0.6, span * 0.6), y: y, w: 78 });
+  }
+  // surface patches: ice is fast but steers badly, powder is slow but forgiving
+  if (R() < 0.14){
+    var pk = R() < 0.5 ? 'ice' : 'powder';
+    patches.push({ t: pk, x: cx + rr(-span * 0.7, span * 0.7), y: y + rr(-40, 40),
+                   rx: rr(90, 190), ry: rr(70, 140) });
+  }
+  var gRoll = R(), gOff = rr(-span * 0.55, span * 0.55);
+  var gateOK = dailyMode ? (y > 120 * PPM) : (dist > 120);
+  if (gateOK && gRoll < 0.11){
+    gates.push({ x: cx + gOff, y: y + 40, w: 110, done: false, hit: false });
+  }
+  if (R() < 0.13){
+    var t = R(), nx = cx + rr(-span * 0.8, span * 0.8);
+    if (t < 0.45){
+      npcs.push({ t: 'skier', x: nx, y: y, vx: 0, vy: rr(110, 190), ph: rr(0, 6.28), r: 11 });
+    } else if (t < 0.75){
+      var dir = R() < 0.5 ? -1 : 1;
+      npcs.push({ t: 'boarder', x: cx - dir * span, y: y + rr(100, 300), vx: dir * rr(170, 250), vy: rr(40, 90), ph: rr(0, 6.28), r: 11 });
+    } else {
+      npcs.push({ t: 'dog', x: nx, y: y, vx: rr(-50, 50), vy: rr(40, 110), ph: rr(0, 6.28), rt: rr(0.4, 1), r: 9 });
+    }
+  }
+}
+function drawPatches(){
+  for (var i = 0; i < patches.length; i++){
+    var pa = patches[i];
+    var sx = pa.x - camX, sy = pa.y - camY;
+    if (sy < -200 || sy > H + 200) continue;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.scale(1, pa.ry / pa.rx);
+    ctx.beginPath();
+    ctx.arc(0, 0, pa.rx, 0, Math.PI * 2);
+    var g = ctx.createRadialGradient(0, 0, pa.rx * 0.15, 0, 0, pa.rx);
+    if (pa.t === 'ice'){
+      g.addColorStop(0, 'rgba(150,215,255,0.62)');
+      g.addColorStop(0.75, 'rgba(170,222,255,0.30)');
+      g.addColorStop(1, 'rgba(176,226,255,0)');
+      ctx.fillStyle = g; ctx.fill();
+      ctx.strokeStyle = 'rgba(140,200,240,0.5)'; ctx.lineWidth = 2; ctx.stroke();
+    } else {
+      g.addColorStop(0, 'rgba(255,255,255,0.55)');
+      g.addColorStop(0.7, 'rgba(248,251,255,0.26)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g; ctx.fill();
+      ctx.strokeStyle = 'rgba(214,228,242,0.45)'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function drawMogul(o){
+  var sx = o.x - camX, sy = o.y - camY, r = o.r * o.s;
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r * 1.25, r * 0.78, 0, 0, Math.PI * 2);
+  var g = ctx.createLinearGradient(0, -r, 0, r);
+  g.addColorStop(0, '#ffffff');
+  g.addColorStop(1, '#c6d6e6');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = 'rgba(150,175,200,0.7)'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.restore();
+}
+
+function cullArr(arr){
+  var out = [];
+  for (var i = 0; i < arr.length; i++){
+    var o = arr[i];
+    if (o.y > camY - 320 && Math.abs(o.x - player.wx) < 3200) out.push(o);
+  }
+  return out;
+}
+
+/* ---------------- monster ---------------- */
+function spawnMonster(){
+  var m = {
+    wx: player.wx + rnd(-200, 200),
+    wy: player.wy - H * 0.9 - 220,
+    ang: Math.PI / 2,  // pointing downhill
+    phase: 'chase', pt: 4.6,
+    legT: 0
+  };
+  monsters.push(m);
+  sfxRoar(true);
+  floats.push({ x: player.wx, y: player.wy - 120, t: 0, txt: 'RRRAAARGH!', big: true });
+  shake = 14;
+}
+function playerCap(){
+  return (BASE_SPEED + Math.min(dist, 4000) / 4000 * SPEED_GAIN) * TUCK;
+}
+function updateMonster(m, dt){
+  m.legT += dt;
+  m.pt -= dt;
+  if (m.pt <= 0){
+    if (m.phase === 'chase'){ m.phase = 'rest'; m.pt = 2.9; }
+    else { m.phase = 'chase'; m.pt = 4.6; sfxRoar(false); shake = Math.max(shake, 6); }
+  }
+  var cap = playerCap();
+  var sp = (m.phase === 'chase') ? cap * 1.12 : cap * 0.56;
+  var turn = (m.phase === 'chase') ? 2.1 : 1.3;
+  var want = Math.atan2(player.wy - m.wy, player.wx - m.wx);
+  var da = want - m.ang;
+  while (da > Math.PI) da -= Math.PI * 2;
+  while (da < -Math.PI) da += Math.PI * 2;
+  var mx = Math.max(-turn * dt, Math.min(turn * dt, da));
+  m.ang += mx;
+  m.wx += Math.cos(m.ang) * sp * dt;
+  m.wy += Math.sin(m.ang) * sp * dt;
+  // never fall hopelessly behind
+  if (m.wy < player.wy - 1500) m.wy = player.wy - 1150;
+  if (Math.abs(m.wx - player.wx) > 2400) m.wx = player.wx + (m.wx > player.wx ? 1600 : -1600);
+  // catch?
+  var dx = m.wx - player.wx, dy = m.wy - player.wy;
+  if (state === 'play' && player.z < 24 && dx * dx + dy * dy < CATCH_R * CATCH_R){
+    state = 'eaten'; eatT = 0; eater = m;
+    sfxRoar(true); shake = 18;
+  }
+}
+
+/* ---------------- update ---------------- */
+var monster1Done = false, monster2Done = false;
+
+function update(dt){
+  gTime += dt;
+  if (shake > 0) shake = Math.max(0, shake - dt * 30);
+
+  if (state === 'eaten'){
+    eatT += dt;
+    if (eatT === dt) {} // first frame
+    if (eatT > 1.0 && eatT - dt <= 1.0) sfxChomp();
+    if (eatT > 1.5 && eatT - dt <= 1.5) sfxChomp();
+    if (eatT > 2.0 && eatT - dt <= 2.0) sfxChomp();
+    if (eatT > 3.4) endRun();
+    if (hissGain) hissGain.gain.value = 0;
+    if (windGain) windGain.gain.value = blizzA * 0.2;
+    return;
+  }
+  if (state !== 'play' || paused){
+    if (hissGain) hissGain.gain.value = 0;
+    if (windGain) windGain.gain.value = 0;
+    return;
+  }
+
+  var p = player;
+  p.prevWy = p.wy;
+
+  // steering repeat while held (keyboard takes priority over touch)
+  var sh = steerHeld !== 0 ? steerHeld : touchSteer;
+  if (sh !== 0){
+    steerTimer -= dt;
+    if (steerTimer <= 0){ steer(sh); steerTimer = 0.13; }
+  }
+  p.tuck = !!(keys['ArrowDown'] || keys['s'] || keys['S']) || touchTuck;
+
+  // --- which surface are we on? ---
+  surface = 'snow';
+  if (!p.air){
+    for (var si = 0; si < patches.length; si++){
+      var pa = patches[si];
+      var pdx = (p.wx - pa.x) / pa.rx, pdy = (p.wy - pa.y) / pa.ry;
+      if (pdx * pdx + pdy * pdy < 1){ surface = pa.t; break; }
+    }
+  }
+
+  // --- wind drifts over the run and shoves you sideways ---
+  windT -= dt;
+  if (windT <= 0){
+    windT = 6 + Math.random() * 8;
+    windTarget = (Math.random() * 2 - 1) * (40 + Math.min(dist, 3000) / 3000 * 70);
+  }
+  wind += (windTarget - wind) * Math.min(1, dt * 0.6);
+
+  // speed
+  var deg = ANGLE_DEG[Math.abs(p.ai)] * Math.PI / 180;
+  var ang = (p.ai < 0 ? -1 : 1) * deg;
+  var target = (BASE_SPEED + Math.min(dist, 4000) / 4000 * SPEED_GAIN) * Math.cos(deg);
+  if (p.tuck && !p.air) target *= TUCK;
+  if (surface === 'ice') target *= 1.16;        // ice runs fast
+  else if (surface === 'powder') target *= 0.82; // powder drags
+  if (p.tumble > 0) target = 0;
+  var k = (target < p.speed) ? 3.0 : 1.5;
+  if (p.air) k = 0.15; // momentum in the air
+  p.speed += (target - p.speed) * Math.min(1, dt * k);
+
+  // move
+  var vx = Math.sin(ang) * p.speed;
+  var vy = Math.cos(ang) * p.speed;
+  if (p.tumble > 0){ vx *= 0.15; vy *= 0.25; }
+  if (!p.air) vx += wind * (surface === 'ice' ? 1.6 : 1);  // ice gives no edge to hold
+  else vx += wind * 0.5;
+  p.wx += vx * dt;
+  p.wy += vy * dt;
+
+  // air physics
+  if (p.air){
+    p.z += p.vz * dt;
+    p.vz -= GRAV * dt;
+    if (p.spinning){
+      p.spin += dt / 0.5;
+      if (p.spin >= 1){
+        p.spinning = false; p.spin = 0;
+        p.spins++; p.pendStyle += 150;
+      }
+    }
+    if (p.z <= 0){
+      p.z = 0; p.vz = 0; p.air = false;
+      if (p.spinning && p.spin > 0.12 && p.spin < 0.88){
+        // landed mid-rotation: crash
+        p.spinning = false; p.spin = 0; p.pendStyle = 0; p.spins = 0;
+        startTumble();
+        floats.push({ x: p.wx, y: p.wy, t: 0, txt: 'WIPEOUT' });
+      } else {
+        p.spinning = false; p.spin = 0;
+        sfxLand();
+        if (p.pendStyle > 0){
+          trickChain++;
+          chainTimer = 10;
+          tricksDone += p.spins;
+          var mult = trickChain;
+          var bonus = (p.pendStyle + (p.spins >= 2 ? 100 : 0)) * mult;
+          style += bonus;
+          floats.push({ x: p.wx, y: p.wy, t: 0, txt: '+' + bonus + ' STYLE' + (mult > 1 ? ' x' + mult : '') });
+          if (trickChain >= 3){
+            sfxChime(trickChain - 1);
+            flourishT = 1.1;
+            shake = Math.max(shake, 5);
+            floats.push({ x: p.wx, y: p.wy - 42, t: 0, txt: 'CHAIN x' + mult + '!', big: true });
+          }
+        }
+        p.pendStyle = 0; p.spins = 0;
+      }
+    }
+  }
+
+  // timers
+  if (p.tumble > 0){
+    p.tumble -= dt;
+    if (p.tumble <= 0){ p.tumble = 0; p.invuln = 1.4; }
+  }
+  if (p.invuln > 0) p.invuln -= dt;
+  if (flourishT > 0) flourishT -= dt;
+  // trick chain decays if you go too long between tricks (clock holds while airborne)
+  if (trickChain > 0 && !p.air){
+    chainTimer -= dt;
+    if (chainTimer <= 0){
+      if (trickChain >= 2) floats.push({ x: p.wx, y: p.wy, t: 0, txt: 'CHAIN ENDED' });
+      trickChain = 0;
+    }
+  }
+
+  dist = Math.max(dist, p.wy / PPM);
+
+  // camera
+  camY = p.wy - H * SKIER_Y_FRAC;
+  camX += (p.wx - W / 2 - camX) * Math.min(1, dt * 5);
+
+  // spawn ahead
+  while (nextSpawnY < camY + H + 420){
+    spawnRow(nextSpawnY);
+    nextSpawnY += 92;
+  }
+
+  // trail
+  if (!p.air && p.tumble <= 0){
+    var lt = trail[trail.length - 1];
+    if (!lt || (p.wx - lt.x) * (p.wx - lt.x) + (p.wy - lt.y) * (p.wy - lt.y) > 49){
+      trail.push({ x: p.wx, y: p.wy, a: ang });
+      if (trail.length > 260) trail.shift();
+    }
+  }
+
+  // scarf (screen-space rope)
+  var hx = p.wx - camX, hy = p.wy - camY - p.z - 15;
+  scarf[0].x = hx; scarf[0].y = hy;
+  for (var i = 1; i < scarf.length; i++){
+    var s = scarf[i];
+    s.x += (-vx * 0.028) * dt * 60 * 0.12;
+    s.y += (-vy * 0.030 - 14 + Math.sin(gTime * 9 + i) * 8) * dt * 60 * 0.12;
+    var dx = s.x - scarf[i - 1].x, dy = s.y - scarf[i - 1].y;
+    var dl = Math.sqrt(dx * dx + dy * dy) || 1;
+    var sp2 = 5.5;
+    s.x = scarf[i - 1].x + dx / dl * sp2;
+    s.y = scarf[i - 1].y + dy / dl * sp2;
+  }
+
+  // ramps
+  for (var ri = 0; ri < ramps.length; ri++){
+    var rp = ramps[ri];
+    if (!p.air && p.prevWy < rp.y && p.wy >= rp.y && Math.abs(p.wx - rp.x) < rp.w / 2 && p.tumble <= 0){
+      p.air = true; p.vz = 300 + p.speed * 0.28; p.z = 0.1;
+      sfxJump();
+      floats.push({ x: p.wx, y: p.wy, t: 0, txt: 'AIR!' });
+    }
+  }
+
+  // gates
+  for (var gi = 0; gi < gates.length; gi++){
+    var g = gates[gi];
+    if (g.done) continue;
+    if (p.prevWy < g.y && p.wy >= g.y){
+      g.done = true;
+      if (Math.abs(p.wx - g.x) <= g.w / 2){
+        g.hit = true; combo++; gatesPassed++;
+        if (combo > bestCombo) bestCombo = combo;
+        var gMult = Math.max(1, trickChain);
+        var pts = 50 * combo * gMult;
+        style += pts;
+        sfxGate();
+        floats.push({ x: g.x, y: g.y, t: 0, txt: '+' + pts + ' GATE x' + combo + (gMult > 1 ? ' CHAIN x' + gMult : '') });
+      } else if (Math.abs(p.wx - g.x) < W * 0.7){
+        if (combo > 0) floats.push({ x: p.wx, y: p.wy, t: 0, txt: 'COMBO LOST' });
+        combo = 0;
+      }
+    }
+  }
+
+  // obstacle collisions
+  if (!p.air && p.tumble <= 0 && p.invuln <= 0){
+    for (var oi = 0; oi < obs.length; oi++){
+      var o = obs[oi];
+      var ddx = o.x - p.wx, ddy = o.y - p.wy;
+      var rr = o.r + 9;
+      if (ddx * ddx + ddy * ddy < rr * rr){
+        if (o.t === 'mogul'){
+          if (o.used) continue;
+          o.used = true;
+          // fast and straight: a free pop. Slow or sideways: it throws you.
+          if (p.speed > 240 && Math.abs(p.ai) <= 2){
+            p.air = true; p.vz = 150 + p.speed * 0.22; p.z = Math.max(p.z, 1);
+            p.pendStyle += 40;
+            floats.push({ x: o.x, y: o.y, t: 0, txt: 'POP +40' });
+            sfxJump();
+          } else {
+            startTumble();
+          }
+          break;
+        }
+        startTumble(); break;
+      }
+    }
+    if (p.tumble <= 0){
+      for (var ni = 0; ni < npcs.length; ni++){
+        var nn = npcs[ni];
+        var nx2 = nn.x - p.wx, ny2 = nn.y - p.wy;
+        var nr = nn.r + 9;
+        if (nx2 * nx2 + ny2 * ny2 < nr * nr){
+          startTumble();
+          nn.vx += (nx2 > 0 ? 80 : -80);
+          break;
+        }
+      }
+    }
+  }
+
+  // npcs
+  for (var j = 0; j < npcs.length; j++){
+    var u = npcs[j];
+    if (u.t === 'skier'){
+      u.x += Math.sin(gTime * 1.4 + u.ph) * 55 * dt;
+      u.y += u.vy * dt;
+    } else if (u.t === 'boarder'){
+      u.x += u.vx * dt;
+      u.y += u.vy * dt;
+    } else { // dog
+      u.rt -= dt;
+      if (u.rt <= 0){ u.rt = rnd(0.4, 1.0); u.vx = rnd(-70, 70); u.vy = rnd(30, 120); }
+      u.x += u.vx * dt;
+      u.y += u.vy * dt;
+    }
+  }
+
+  // monsters
+  if (!monster1Done && dist >= MONSTER1_AT){ monster1Done = true; spawnMonster(); }
+  if (!monster2Done && dist >= MONSTER2_AT){ monster2Done = true; spawnMonster(); }
+  for (var mi = 0; mi < monsters.length; mi++) updateMonster(monsters[mi], dt);
+
+  // blizzard weather
+  if (blizzState === 'none' && dist >= nextBlizzAt){
+    blizzState = 'active'; blizzT = 0;
+    blizzDur = rnd(15, 20);
+    windDir = Math.random() < 0.5 ? -1 : 1;
+    sfxWind();
+    shake = Math.max(shake, 4);
+    floats.push({ x: p.wx, y: p.wy - 60, t: 0, txt: 'BLIZZARD!', big: true });
+  }
+  if (blizzState === 'active'){
+    blizzT += dt;
+    var tIn = Math.min(1, blizzT / 2.5);
+    var tOut = Math.min(1, Math.max(0, (blizzDur - blizzT) / 2.5));
+    blizzA = Math.min(tIn, tOut);
+    if (blizzT >= blizzDur){
+      blizzState = 'none'; blizzA = 0;
+      // calm spell, then storms come back sooner the deeper you go
+      nextBlizzAt = dist + Math.max(260, 900 - dist * 0.06) + rnd(0, 250);
+    }
+  }
+  if (windGain) windGain.gain.value = blizzA * (0.3 + 0.12 * Math.sin(gTime * 1.3));
+  // snowfall particles (screen space)
+  var wantFlakes = Math.floor(blizzA * 170);
+  while (flakes.length < wantFlakes){
+    flakes.push({ x: Math.random() * W, y: Math.random() * H, vx: rnd(90, 240), vy: rnd(160, 340), r: rnd(1, 2.6) });
+  }
+  if (flakes.length > wantFlakes) flakes.length = wantFlakes;
+  for (var fl = 0; fl < flakes.length; fl++){
+    var fk = flakes[fl];
+    fk.x += windDir * fk.vx * (0.7 + 0.3 * Math.sin(gTime * 2 + fk.vy)) * dt;
+    fk.y += fk.vy * dt;
+    if (fk.y > H + 8){ fk.y = -8; fk.x = Math.random() * W; }
+    if (fk.x > W + 8) fk.x = -8;
+    if (fk.x < -8) fk.x = W + 8;
+  }
+
+  // floats
+  for (var fi = floats.length - 1; fi >= 0; fi--){
+    floats[fi].t += dt;
+    if (floats[fi].t > 1.4) floats.splice(fi, 1);
+  }
+
+  // cull
+  if ((gTime * 60 | 0) % 20 === 0){
+    obs = cullArr(obs); ramps = cullArr(ramps); gates = cullArr(gates); npcs = cullArr(npcs);
+    patches = cullArr(patches);
+  }
+
+  // carve hiss
+  if (hissGain){
+    var hv = (!p.air && p.tumble <= 0) ? Math.min(0.22, p.speed / 2600) * (1 + Math.abs(p.ai) * 0.18) : 0;
+    hissGain.gain.value = Math.min(0.3, hv);
+  }
+}
+function startTumble(){
+  player.tumble = 1.1;
+  player.speed *= 0.2;
+  combo = 0;
+  if (trickChain >= 2) floats.push({ x: player.wx, y: player.wy - 20, t: 0, txt: 'CHAIN LOST' });
+  trickChain = 0; chainTimer = 0;
+  sfxTumble();
+  shake = Math.max(shake, 7);
+}
+
+// monster spawn flags reset with run
+var _origReset = resetRun;
+resetRun = function(){ _origReset(); monster1Done = false; monster2Done = false; };
+
+/* ---------------- drawing ---------------- */
+function sx(x){ return x - camX; }
+function sy(y){ return y - camY; }
+
+/* ---------- cached graphics assets (visual only) ---------- */
+var gfxDt = 0.016;
+
+// snow ground tiles: blue-shadowed drifts, soft-shaded moguls, fine grain
+var TILE = 384;
+var snowTiles = [];
+function makeSnowTile(seed){
+  var c = document.createElement('canvas');
+  c.width = TILE; c.height = TILE;
+  var g = c.getContext('2d');
+  var R = mulberry32(seed);
+  g.fillStyle = '#f6f9fd';
+  g.fillRect(0, 0, TILE, TILE);
+  // broad wind drifts: blue shadow side, sunlit crest
+  for (var i = 0; i < 6; i++){
+    var rw = 36 + R() * 80, rh = rw * (0.32 + R() * 0.3);
+    var x = rw + R() * (TILE - rw * 2), y = rh + R() * (TILE - rh * 2);
+    var rot = (R() - 0.5) * 0.9;
+    g.fillStyle = 'rgba(198,212,234,0.42)';
+    g.beginPath(); g.ellipse(x + 4, y + 5, rw, rh, rot, 0, Math.PI * 2); g.fill();
+    g.fillStyle = 'rgba(252,254,255,0.85)';
+    g.beginPath(); g.ellipse(x - 2, y - 3, rw * 0.92, rh * 0.82, rot, 0, Math.PI * 2); g.fill();
+  }
+  // moguls: soft round bumps, lit from the upper-left
+  for (var m = 0; m < 5; m++){
+    var mr = 13 + R() * 24;
+    var mx = mr + R() * (TILE - mr * 2), my = mr + R() * (TILE - mr * 2);
+    var rg = g.createRadialGradient(mx - mr * 0.35, my - mr * 0.45, mr * 0.1, mx, my, mr);
+    rg.addColorStop(0, 'rgba(255,255,255,0.95)');
+    rg.addColorStop(0.62, 'rgba(234,241,250,0.30)');
+    rg.addColorStop(1, 'rgba(173,190,218,0.42)');
+    g.fillStyle = rg;
+    g.beginPath(); g.arc(mx, my, mr, 0, Math.PI * 2); g.fill();
+  }
+  // fine grain
+  for (var s = 0; s < 170; s++){
+    g.fillStyle = (R() < 0.5) ? 'rgba(168,185,214,0.22)' : 'rgba(255,255,255,0.55)';
+    g.fillRect(R() * TILE, R() * TILE, 1.6, 1.2);
+  }
+  return c;
+}
+snowTiles.push(makeSnowTile(1013904223), makeSnowTile(1664525), makeSnowTile(69069));
+
+// distant mountain range with haze layers (parallax backdrop)
+var mtn = null, mtnW = 0, MTN_H = 168;
+function buildBackdrop(){
+  mtnW = Math.ceil(Math.max(W * 1.7, 1000));
+  mtn = document.createElement('canvas');
+  mtn.width = mtnW; mtn.height = MTN_H;
+  var g = mtn.getContext('2d');
+  var sky = g.createLinearGradient(0, 0, 0, MTN_H);
+  sky.addColorStop(0, '#dcebfa');
+  sky.addColorStop(0.55, '#e9f2fb');
+  sky.addColorStop(1, '#f6f9fd');
+  g.fillStyle = sky;
+  g.fillRect(0, 0, mtnW, MTN_H);
+  var R = mulberry32(777);
+  var layers = [
+    { col: '#cbdaee', base: 84,  amp: 30, f1: 0.0042, f2: 0.012 },
+    { col: '#b6c9e4', base: 104, amp: 38, f1: 0.0036, f2: 0.010 },
+    { col: '#9eb5d7', base: 126, amp: 46, f1: 0.0030, f2: 0.009 }
+  ];
+  for (var li = 0; li < layers.length; li++){
+    var L = layers[li];
+    var p1 = R() * 9, p2 = R() * 9, p3 = R() * 9;
+    var pts = [];
+    for (var x = 0; x <= mtnW; x += 6){
+      pts.push(L.base
+        - Math.abs(Math.sin(x * L.f1 + p1)) * L.amp
+        - Math.abs(Math.sin(x * L.f2 + p2)) * L.amp * 0.45
+        - Math.sin(x * 0.03 + p3) * 3);
+    }
+    // white ridge first, then the rock shifted down: peaks keep their snow caps
+    for (var pass = 0; pass < 2; pass++){
+      g.fillStyle = pass === 0 ? '#ffffff' : L.col;
+      g.beginPath();
+      g.moveTo(0, MTN_H);
+      for (var k = 0; k < pts.length; k++) g.lineTo(k * 6, pts[k] + (pass === 0 ? 0 : 9));
+      g.lineTo(mtnW, MTN_H);
+      g.closePath();
+      g.fill();
+    }
+    // haze veil over everything behind this ridge
+    g.fillStyle = 'rgba(236,244,252,' + (0.30 - li * 0.08).toFixed(2) + ')';
+    g.fillRect(0, 0, mtnW, MTN_H);
+  }
+  // dissolve into the snowfield
+  var fade = g.createLinearGradient(0, 96, 0, MTN_H);
+  fade.addColorStop(0, 'rgba(246,249,253,0)');
+  fade.addColorStop(1, 'rgba(246,249,253,1)');
+  g.fillStyle = fade;
+  g.fillRect(0, 0, mtnW, MTN_H);
+}
+function drawBackdrop(){
+  if (!mtn) return;
+  var off = -((camX * 0.055) % mtnW);
+  if (off > 0) off -= mtnW;
+  ctx.drawImage(mtn, off, 0);
+  if (off + mtnW < W) ctx.drawImage(mtn, off + mtnW, 0);
+  // cable car crossing high above, every so often
+  var cyc = 34, ct = (gTime % cyc) / cyc;
+  if (ct < 0.42){
+    var tq = ct / 0.42;
+    var cx2 = -30 + (W + 60) * tq;
+    var omt = 1 - tq;
+    var cy2 = omt * omt * 24 + 2 * omt * tq * 44 + tq * tq * 30;
+    ctx.strokeStyle = 'rgba(90,108,138,0.40)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, 24);
+    ctx.quadraticCurveTo(W * 0.5, 44, W, 30);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(70,86,112,0.7)';
+    ctx.beginPath(); ctx.moveTo(cx2, cy2); ctx.lineTo(cx2, cy2 + 4); ctx.stroke();
+    ctx.fillStyle = 'rgba(70,86,112,0.75)';
+    ctx.fillRect(cx2 - 5.5, cy2 + 4, 11, 8);
+    ctx.fillStyle = 'rgba(150,170,200,0.8)';
+    ctx.fillRect(cx2 - 4, cy2 + 6, 8, 3);
+  }
+  // birds drifting across the haze
+  for (var b = 0; b < 3; b++){
+    var bx = ((gTime * (26 + b * 9) + b * 540) % (W + 260)) - 130;
+    var by = 34 + b * 16 + Math.sin(gTime * 0.7 + b * 2.1) * 7;
+    var wf = Math.sin(gTime * 6 + b * 2.1) * 3.2;
+    ctx.strokeStyle = 'rgba(70,86,112,0.5)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(bx - 4, by - wf);
+    ctx.quadraticCurveTo(bx, by + 1, bx + 4, by - wf);
+    ctx.stroke();
+  }
+}
+
+// frost that creeps in from the screen edges during blizzards
+var frost = null;
+function buildFrost(){
+  frost = document.createElement('canvas');
+  frost.width = Math.max(2, W); frost.height = Math.max(2, H);
+  var g = frost.getContext('2d');
+  var R = mulberry32(424242);
+  var rad = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.38, W / 2, H / 2, Math.max(W, H) * 0.72);
+  rad.addColorStop(0, 'rgba(226,239,252,0)');
+  rad.addColorStop(0.75, 'rgba(222,236,251,0.35)');
+  rad.addColorStop(1, 'rgba(212,230,250,0.9)');
+  g.fillStyle = rad;
+  g.fillRect(0, 0, W, H);
+  // feathery crystals along the edges
+  for (var i = 0; i < 110; i++){
+    var edge = i % 4;
+    var x = R() * W, y = R() * H;
+    if (edge === 0) y = R() * 70;
+    else if (edge === 1) y = H - R() * 70;
+    else if (edge === 2) x = R() * 70;
+    else x = W - R() * 70;
+    var len = 5 + R() * 16, a0 = R() * Math.PI * 2;
+    g.strokeStyle = 'rgba(255,255,255,' + (0.25 + R() * 0.4).toFixed(2) + ')';
+    g.lineWidth = 1;
+    g.beginPath();
+    for (var k2 = 0; k2 < 3; k2++){
+      var aa = a0 + k2 * 2.1;
+      g.moveTo(x, y);
+      g.lineTo(x + Math.cos(aa) * len, y + Math.sin(aa) * len);
+      g.moveTo(x + Math.cos(aa) * len * 0.5, y + Math.sin(aa) * len * 0.5);
+      g.lineTo(x + Math.cos(aa) * len * 0.5 + Math.cos(aa + 0.9) * len * 0.35,
+               y + Math.sin(aa) * len * 0.5 + Math.sin(aa + 0.9) * len * 0.35);
+    }
+    g.stroke();
+  }
+}
+buildBackdrop(); buildFrost();
+window.addEventListener('resize', function(){ buildBackdrop(); buildFrost(); });
+
+// snow spray particles (purely cosmetic)
+var sprays = [];
+function spawnSpray(wx, wy, n, pow, up){
+  for (var i = 0; i < n; i++){
+    if (sprays.length > 150) sprays.shift();
+    var a = rnd(-Math.PI, Math.PI);
+    sprays.push({
+      x: wx + rnd(-5, 5), y: wy + rnd(-4, 4),
+      vx: Math.cos(a) * rnd(14, pow), vy: Math.sin(a) * rnd(8, pow * 0.55),
+      z: rnd(1, 8), vz: rnd(40, 90) + (up || 0),
+      t: 0, life: rnd(0.3, 0.65), r: rnd(1.2, 3.1)
+    });
+  }
+}
+function updateSprays(){
+  for (var i = sprays.length - 1; i >= 0; i--){
+    var s = sprays[i];
+    s.t += gfxDt;
+    if (s.t > s.life){ sprays.splice(i, 1); continue; }
+    s.x += s.vx * gfxDt; s.y += s.vy * gfxDt;
+    s.z += s.vz * gfxDt; s.vz -= 430 * gfxDt;
+    if (s.z < 0){ s.z = 0; s.vz *= -0.25; }
+  }
+}
+function drawSprays(){
+  for (var i = 0; i < sprays.length; i++){
+    var s = sprays[i];
+    var a = Math.max(0, 1 - s.t / s.life);
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.85 * a).toFixed(2) + ')';
+    ctx.beginPath(); ctx.arc(sx(s.x), sy(s.y) - s.z, s.r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(176,196,226,' + (0.3 * a).toFixed(2) + ')';
+    ctx.beginPath(); ctx.arc(sx(s.x) + 1, sy(s.y) - s.z + 1, s.r * 0.7, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function drawSnow(){
+  ctx.fillStyle = '#f6f9fd';
+  ctx.fillRect(0, 0, W, H);
+  var x0 = Math.floor(camX / TILE) - 1, x1 = Math.floor((camX + W) / TILE) + 1;
+  var y0 = Math.floor(camY / TILE) - 1, y1 = Math.floor((camY + H) / TILE) + 1;
+  for (var cyi = y0; cyi <= y1; cyi++){
+    for (var cxi = x0; cxi <= x1; cxi++){
+      var h = ((cxi * 73856093) ^ (cyi * 19349663)) >>> 0;
+      ctx.drawImage(snowTiles[h % snowTiles.length], Math.round(sx(cxi * TILE)), Math.round(sy(cyi * TILE)));
+      // sparkle glints that twinkle
+      var rng = mulberry32((h ^ 0x9e3779b9) | 0);
+      for (var i = 0; i < 5; i++){
+        var px = cxi * TILE + rng() * TILE, py = cyi * TILE + rng() * TILE;
+        var spd = 2 + rng() * 2.4, phz = rng() * 6.28;
+        var tw = 0.5 + 0.5 * Math.sin(gTime * spd + phz);
+        tw = tw * tw * tw;
+        if (tw < 0.08) continue;
+        var gx = sx(px), gy = sy(py);
+        ctx.fillStyle = 'rgba(255,255,255,' + (0.9 * tw).toFixed(2) + ')';
+        ctx.fillRect(gx - 1, gy - 1, 2, 2);
+        if (tw > 0.6){
+          ctx.strokeStyle = 'rgba(255,255,255,' + (0.7 * tw).toFixed(2) + ')';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(gx - 3.5, gy); ctx.lineTo(gx + 3.5, gy);
+          ctx.moveTo(gx, gy - 3.5); ctx.lineTo(gx, gy + 3.5);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+}
+
+function drawTrail(){
+  if (trail.length < 2) return;
+  var n = trail.length, step = 28;
+  for (var start = 1; start < n; start += step){
+    var end = Math.min(n - 1, start + step);
+    var prog = start / n;
+    var aG = 0.08 + 0.46 * prog;   // carved groove
+    var aH = 0.10 + 0.55 * prog;   // sunlit lip
+    for (var side = -1; side <= 1; side += 2){
+      for (var pass = 0; pass < 2; pass++){
+        ctx.strokeStyle = pass === 0
+          ? 'rgba(148,168,199,' + aG.toFixed(2) + ')'
+          : 'rgba(255,255,255,' + aH.toFixed(2) + ')';
+        ctx.lineWidth = pass === 0 ? 2.4 : 1.1;
+        ctx.beginPath();
+        var pen = false;
+        for (var i = start - 1; i <= end; i++){
+          var t = trail[i];
+          if (pen){
+            var q = trail[i - 1];
+            var ddx = t.x - q.x, ddy = t.y - q.y;
+            if (ddx * ddx + ddy * ddy > 1600) pen = false;  // gap in the track
+          }
+          var ox = Math.cos(t.a) * 3.8 * side + (pass === 1 ? 1.1 : 0);
+          var oy = -Math.sin(t.a) * 3.8 * side + (pass === 1 ? 1.1 : 0);
+          if (!pen){ ctx.moveTo(sx(t.x) + ox, sy(t.y) + oy); pen = true; }
+          else ctx.lineTo(sx(t.x) + ox, sy(t.y) + oy);
+        }
+        ctx.stroke();
+      }
+    }
+  }
+}
+
+function drawRamp(r){
+  var x = sx(r.x), y = sy(r.y);
+  var hw = r.w / 2;
+  // soft drop shadow pooling downhill of the lip
+  ctx.fillStyle = 'rgba(96,116,150,0.20)';
+  ctx.beginPath(); ctx.ellipse(x + 4, y + 11, hw * 0.96, 8, 0, 0, Math.PI * 2); ctx.fill();
+  // packed-snow face, shaded toward the base
+  var fg = ctx.createLinearGradient(x, y - 16, x, y + 10);
+  fg.addColorStop(0, '#eef5fc');
+  fg.addColorStop(1, '#c4d7ec');
+  ctx.fillStyle = fg;
+  ctx.beginPath();
+  ctx.moveTo(x - hw, y + 10);
+  ctx.lineTo(x - hw + 10, y - 14);
+  ctx.lineTo(x + hw - 10, y - 14);
+  ctx.lineTo(x + hw, y + 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#9fb6d4';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // worn track lines up the face
+  ctx.strokeStyle = 'rgba(160,180,210,0.5)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x - hw * 0.4, y + 8); ctx.lineTo(x - hw * 0.34, y - 12);
+  ctx.moveTo(x + hw * 0.4, y + 8); ctx.lineTo(x + hw * 0.34, y - 12);
+  ctx.stroke();
+  // side kick walls
+  ctx.fillStyle = '#b6cbe4';
+  ctx.beginPath();
+  ctx.moveTo(x - hw, y + 10); ctx.lineTo(x - hw + 10, y - 14); ctx.lineTo(x - hw + 13, y - 12); ctx.lineTo(x - hw + 4, y + 10);
+  ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(x + hw, y + 10); ctx.lineTo(x + hw - 10, y - 14); ctx.lineTo(x + hw - 13, y - 12); ctx.lineTo(x + hw - 4, y + 10);
+  ctx.closePath(); ctx.fill();
+  // lip: bright crest with an icy edge highlight
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(x - hw + 10, y - 17, r.w - 20, 4);
+  ctx.fillStyle = 'rgba(140,190,235,0.8)';
+  ctx.fillRect(x - hw + 10, y - 13, r.w - 20, 1.6);
+}
+
+function treeVar(o){
+  if (o._v === undefined) o._v = ((o.x * 374761393 + o.y * 668265263) | 0) >>> 0;
+  return o._v;
+}
+function drawTree(o){
+  var x = sx(o.x), y = sy(o.y), s = o.s;
+  var v = treeVar(o);
+  var tiers = 3 + (v % 2);
+  var ln = (((v >>> 3) % 7) - 3) * 0.013;   // slight natural lean
+  // soft layered drop shadow
+  ctx.fillStyle = 'rgba(86,106,140,0.13)';
+  ctx.beginPath(); ctx.ellipse(x + 6 * s, y + 4, 17 * s, 6.5 * s, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(86,106,140,0.12)';
+  ctx.beginPath(); ctx.ellipse(x + 4 * s, y + 3, 11 * s, 4.5 * s, 0, 0, Math.PI * 2); ctx.fill();
+  // trunk with shaded side
+  ctx.fillStyle = '#6b4a2f';
+  ctx.fillRect(x - 2.5 * s, y - 8 * s, 5 * s, 10 * s);
+  ctx.fillStyle = '#54371f';
+  ctx.fillRect(x + 0.5 * s, y - 8 * s, 2 * s, 10 * s);
+  // boughs: sagging tiers, each carrying a load of snow
+  for (var i = 0; i < tiers; i++){
+    var w2 = (26 - 6 * i) * s * (tiers === 4 ? 1.12 : 1);
+    var by = y - (5 + i * 12) * s, ty = by - 19 * s;
+    var cxo = ln * (i + 1) * 30 * s;
+    ctx.fillStyle = i >= tiers - 1 ? '#30704a' : (i === 1 ? '#2a5f3e' : '#234f34');
+    ctx.beginPath();
+    ctx.moveTo(x - w2 + cxo, by);
+    ctx.quadraticCurveTo(x - w2 * 0.25 + cxo, by - 10 * s, x + cxo + ln * 24 * s, ty);
+    ctx.quadraticCurveTo(x + w2 * 0.25 + cxo, by - 10 * s, x + w2 + cxo, by);
+    ctx.quadraticCurveTo(x + w2 * 0.55 + cxo, by + 3.5 * s, x + w2 * 0.3 + cxo, by);
+    ctx.quadraticCurveTo(x + cxo, by + 2.5 * s, x - w2 * 0.3 + cxo, by);
+    ctx.quadraticCurveTo(x - w2 * 0.55 + cxo, by + 3.5 * s, x - w2 + cxo, by);
+    ctx.closePath();
+    ctx.fill();
+    // snow draped across the bough
+    ctx.fillStyle = 'rgba(255,255,255,0.88)';
+    ctx.beginPath();
+    ctx.moveTo(x - w2 * 0.78 + cxo, by - 3 * s);
+    ctx.quadraticCurveTo(x - w2 * 0.3 + cxo, by - 11 * s, x + cxo, by - 11.5 * s);
+    ctx.quadraticCurveTo(x + w2 * 0.3 + cxo, by - 11 * s, x + w2 * 0.78 + cxo, by - 3 * s);
+    ctx.quadraticCurveTo(x + w2 * 0.4 + cxo, by - 6.5 * s, x + cxo, by - 7 * s);
+    ctx.quadraticCurveTo(x - w2 * 0.4 + cxo, by - 6.5 * s, x - w2 * 0.78 + cxo, by - 3 * s);
+    ctx.closePath();
+    ctx.fill();
+    // cool blue underside of the snow load
+    ctx.fillStyle = 'rgba(176,197,226,0.5)';
+    ctx.beginPath();
+    ctx.ellipse(x + cxo, by - 4.5 * s, w2 * 0.5, 1.8 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // snow cap on the crown
+  var topY = y - (5 + (tiers - 1) * 12) * s - 19 * s;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.ellipse(x + ln * tiers * 30 * s, topY + 2.5 * s, 4.2 * s, 3 * s, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawRock(o){
+  var x = sx(o.x), y = sy(o.y), s = o.s;
+  ctx.fillStyle = 'rgba(86,106,140,0.16)';
+  ctx.beginPath(); ctx.ellipse(x + 5 * s, y + 4 * s, 15 * s, 5.5 * s, 0, 0, Math.PI * 2); ctx.fill();
+  // main face, shaded toward the base
+  var rg = ctx.createLinearGradient(x - 10 * s, y - 12 * s, x + 8 * s, y + 5 * s);
+  rg.addColorStop(0, '#9aa4b4');
+  rg.addColorStop(1, '#788293');
+  ctx.fillStyle = rg;
+  ctx.beginPath();
+  ctx.moveTo(x - 13 * s, y + 4 * s);
+  ctx.lineTo(x - 9 * s, y - 8 * s);
+  ctx.lineTo(x + 2 * s, y - 12 * s);
+  ctx.lineTo(x + 12 * s, y - 3 * s);
+  ctx.lineTo(x + 10 * s, y + 5 * s);
+  ctx.closePath(); ctx.fill();
+  // lit top facet
+  ctx.fillStyle = '#b4bdcb';
+  ctx.beginPath();
+  ctx.moveTo(x - 9 * s, y - 8 * s);
+  ctx.lineTo(x + 2 * s, y - 12 * s);
+  ctx.lineTo(x + 4 * s, y - 5 * s);
+  ctx.lineTo(x - 5 * s, y - 3 * s);
+  ctx.closePath(); ctx.fill();
+  // strata: bedding lines across the face
+  ctx.strokeStyle = 'rgba(70,80,96,0.45)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(x - 11 * s, y - 1 * s); ctx.quadraticCurveTo(x, y - 4 * s, x + 11 * s, y - 1 * s);
+  ctx.moveTo(x - 10 * s, y - 5 * s); ctx.quadraticCurveTo(x - 1 * s, y - 8 * s, x + 9 * s, y - 5 * s);
+  ctx.moveTo(x - 7 * s, y - 9 * s); ctx.quadraticCurveTo(x, y - 11 * s, x + 6 * s, y - 8.5 * s);
+  ctx.stroke();
+  // crack
+  ctx.strokeStyle = 'rgba(60,70,86,0.5)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x + 3 * s, y - 11 * s); ctx.lineTo(x + 1 * s, y - 6 * s); ctx.lineTo(x + 4 * s, y - 2 * s);
+  ctx.stroke();
+  // snow cap with a blue shadow edge
+  ctx.fillStyle = 'rgba(176,197,226,0.6)';
+  ctx.beginPath(); ctx.ellipse(x - 1 * s, y - 10 * s, 7.4 * s, 2.9 * s, -0.2, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.beginPath(); ctx.ellipse(x - 1.4 * s, y - 11 * s, 7 * s, 2.5 * s, -0.2, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawStump(o){
+  var x = sx(o.x), y = sy(o.y), s = o.s;
+  ctx.fillStyle = 'rgba(86,106,140,0.16)';
+  ctx.beginPath(); ctx.ellipse(x + 4 * s, y + 3 * s, 10 * s, 4 * s, 0, 0, Math.PI * 2); ctx.fill();
+  // bark with vertical grain
+  ctx.fillStyle = '#6b4a2f';
+  ctx.fillRect(x - 7 * s, y - 9 * s, 14 * s, 10 * s);
+  ctx.fillStyle = '#5a3c24';
+  ctx.fillRect(x - 7 * s, y - 9 * s, 3 * s, 10 * s);
+  ctx.fillRect(x + 2 * s, y - 9 * s, 2 * s, 10 * s);
+  // root flare
+  ctx.fillStyle = '#6b4a2f';
+  ctx.beginPath();
+  ctx.moveTo(x - 7 * s, y + 1); ctx.lineTo(x - 9.5 * s, y + 1.4 * s); ctx.lineTo(x - 7 * s, y - 2 * s);
+  ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(x + 7 * s, y + 1); ctx.lineTo(x + 9.5 * s, y + 1.4 * s); ctx.lineTo(x + 7 * s, y - 2 * s);
+  ctx.closePath(); ctx.fill();
+  // cut face with growth rings
+  ctx.fillStyle = '#b08a5e';
+  ctx.beginPath(); ctx.ellipse(x, y - 9 * s, 7 * s, 3.4 * s, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(122,88,52,0.8)';
+  ctx.lineWidth = 1;
+  for (var ri = 1; ri <= 3; ri++){
+    ctx.beginPath();
+    ctx.ellipse(x - 0.5 * s * ri * 0.4, y - 9 * s, (7 - ri * 1.8) * s, (3.4 - ri * 0.85) * s, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.fillStyle = '#7a5834';
+  ctx.beginPath(); ctx.arc(x - 1 * s, y - 9 * s, 1 * s, 0, Math.PI * 2); ctx.fill();
+  // wedge of snow on the cut
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.beginPath(); ctx.ellipse(x + 2.4 * s, y - 10 * s, 3.4 * s, 1.5 * s, 0.25, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawGate(g){
+  var x = sx(g.x), y = sy(g.y);
+  if (g.done && g.hit && g._hitAt === undefined) g._hitAt = gTime;   // visual only
+  var kick = (g._hitAt !== undefined) ? Math.max(0, 1 - (gTime - g._hitAt) / 1.2) : 0;
+  var pair = (Math.round(g.y / 132) % 2 === 0);
+  var cloth = g.done ? (g.hit ? (pair ? '#8fb3e4' : '#e4a49e') : '#c3cedd') : (pair ? '#2d6fd1' : '#d9372f');
+  var edge = g.done ? '#9aa8bd' : (pair ? '#1d4e9a' : '#a8241d');
+  for (var side = -1; side <= 1; side += 2){
+    var px = x + side * g.w / 2;
+    // pole base shadow
+    ctx.fillStyle = 'rgba(86,106,140,0.18)';
+    ctx.beginPath(); ctx.ellipse(px + 2, y + 1, 5, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.save();
+    ctx.translate(px, y);
+    // clipped poles whip back and forth as they spring upright
+    if (kick > 0) ctx.rotate(Math.sin((gTime - g._hitAt) * 16) * 0.55 * kick * -side);
+    // pole with joint bands
+    ctx.strokeStyle = '#3c4454'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -28); ctx.stroke();
+    ctx.lineCap = 'butt';
+    ctx.fillStyle = '#e8edf5';
+    ctx.fillRect(-1.6, -22, 3.2, 3);
+    ctx.fillRect(-1.6, -12, 3.2, 3);
+    // flag cloth rippling in the wind
+    var flap1 = Math.sin(gTime * 7 + g.x * 0.03 + side) * 2.6;
+    var flap2 = Math.sin(gTime * 9 + g.x * 0.03 + side * 2) * 2;
+    var fx = -side;   // flags point inward toward the line
+    ctx.fillStyle = cloth;
+    ctx.beginPath();
+    ctx.moveTo(0, -27);
+    ctx.quadraticCurveTo(fx * 9, -26 + flap1, fx * 16, -24 + flap1);
+    ctx.quadraticCurveTo(fx * 9, -21 + flap2, fx * 15, -18 + flap2);
+    ctx.quadraticCurveTo(fx * 7, -17.5, 0, -16);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = edge;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // cloth sheen
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.beginPath();
+    ctx.moveTo(fx * 2, -24.5);
+    ctx.quadraticCurveTo(fx * 8, -24 + flap1 * 0.7, fx * 13, -22.5 + flap1 * 0.8);
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (!g.done){
+    ctx.strokeStyle = 'rgba(45,111,209,0.35)';
+    ctx.setLineDash([5, 6]); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x - g.w / 2 + 4, y - 4); ctx.lineTo(x + g.w / 2 - 4, y - 4); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+var NPC_FITS = [
+  ['#b2302f', '#17315e', '#e8c87e'],
+  ['#2f8a4e', '#233048', '#d9efe2'],
+  ['#7a56b5', '#2a2f3a', '#cfd8ea'],
+  ['#e0862a', '#1d4e9a', '#f6e3c3']
+];
+function npcFit(u){
+  if (u._f === undefined) u._f = Math.abs(Math.floor(u.ph * 113)) % NPC_FITS.length;
+  return NPC_FITS[u._f];
+}
+function drawLittleSkier(u){
+  var x = sx(u.x), y = sy(u.y);
+  var fit = npcFit(u);
+  var lean = Math.cos(gTime * 1.4 + u.ph) * 0.3;   // matches their weaving line
+  ctx.fillStyle = 'rgba(86,106,140,0.16)';
+  ctx.beginPath(); ctx.ellipse(x, y + 2, 10, 3.6, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(lean * 0.5);
+  // skis
+  ctx.strokeStyle = '#8a2d24'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-4, 9); ctx.lineTo(-4 - lean * 4, -6);
+  ctx.moveTo(4, 9); ctx.lineTo(4 - lean * 4, -6);
+  ctx.stroke();
+  ctx.lineCap = 'butt';
+  // legs
+  ctx.strokeStyle = '#2a3144'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-3, -2); ctx.lineTo(-4, 6);
+  ctx.moveTo(3, -2); ctx.lineTo(4, 6);
+  ctx.stroke();
+  // body leans into the turn
+  ctx.save();
+  ctx.rotate(lean * 0.4);
+  ctx.fillStyle = fit[0];
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(-5, -15, 10, 13, 2.5); else ctx.rect(-5, -15, 10, 13);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  ctx.fillRect(-5, -5, 10, 3);
+  // arms + poles
+  ctx.strokeStyle = fit[0]; ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(-5, -11); ctx.lineTo(-8, -5 + lean * 3);
+  ctx.moveTo(5, -11); ctx.lineTo(8, -5 - lean * 3);
+  ctx.stroke();
+  ctx.strokeStyle = '#666f80'; ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.moveTo(-8, -5 + lean * 3); ctx.lineTo(-9, 8);
+  ctx.moveTo(8, -5 - lean * 3); ctx.lineTo(9, 8);
+  ctx.stroke();
+  // head: goggles + bobble hat
+  ctx.fillStyle = '#f0c8a0';
+  ctx.beginPath(); ctx.arc(0, -19, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#2a2f3a';
+  ctx.fillRect(-4, -21, 8, 2.6);
+  ctx.fillStyle = fit[1];
+  ctx.beginPath(); ctx.arc(0, -21, 4.2, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = fit[2];
+  ctx.beginPath(); ctx.arc(0, -25.5, 1.6, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+}
+function drawBoarder(u){
+  var x = sx(u.x), y = sy(u.y), d = u.vx > 0 ? 1 : -1;
+  var fit = npcFit(u);
+  var bob = Math.sin(gTime * 5 + u.ph) * 1.4;
+  ctx.fillStyle = 'rgba(86,106,140,0.16)';
+  ctx.beginPath(); ctx.ellipse(x, y + 2, 12, 3.8, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.save();
+  ctx.translate(x, y + bob * 0.3);
+  // board with kicked tips and a deck stripe
+  ctx.strokeStyle = '#23283a'; ctx.lineWidth = 3.4; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-12, 3); ctx.quadraticCurveTo(0, 7.5, 12, 3); ctx.stroke();
+  ctx.strokeStyle = fit[2]; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(-9, 4.2); ctx.quadraticCurveTo(0, 6.8, 9, 4.2); ctx.stroke();
+  ctx.lineCap = 'butt';
+  // legs braced across the board
+  ctx.strokeStyle = '#2a3144'; ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(-5, 3); ctx.lineTo(-3 + d, -4);
+  ctx.moveTo(5, 3); ctx.lineTo(3 + d, -4);
+  ctx.stroke();
+  // jacket leaning down the fall line
+  ctx.save();
+  ctx.translate(d * 1.5, -9 + bob * 0.4);
+  ctx.rotate(d * (0.3 + Math.sin(gTime * 3 + u.ph) * 0.08));
+  ctx.fillStyle = fit[0];
+  if (ctx.roundRect){ ctx.beginPath(); ctx.roundRect(-5, -7, 10, 13, 2.5); ctx.fill(); }
+  else ctx.fillRect(-5, -7, 10, 13);
+  // trailing arm and leading arm
+  ctx.strokeStyle = fit[0]; ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(-5, -4); ctx.lineTo(-10, -1 + bob);
+  ctx.moveTo(5, -4); ctx.lineTo(10, -8 - bob);
+  ctx.stroke();
+  ctx.restore();
+  // head: beanie with goggles parked on the brim
+  ctx.fillStyle = '#f0c8a0';
+  ctx.beginPath(); ctx.arc(d * 2.4, -20 + bob * 0.4, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#2a2f3a';
+  ctx.fillRect(d * 2.4 - 4, -21.4 + bob * 0.4, 8, 2);
+  ctx.fillStyle = fit[1];
+  ctx.beginPath(); ctx.arc(d * 2.4, -21.5 + bob * 0.4, 4.3, Math.PI, 0); ctx.fill();
+  ctx.restore();
+}
+function drawDog(u){
+  var x = sx(u.x), y = sy(u.y);
+  var ph2 = gTime * 10 + u.ph;
+  var bound = Math.abs(Math.sin(ph2));        // bounding gait cycle
+  var stretch = Math.cos(ph2 * 2) * 0.16;     // body extends mid-leap
+  var lift = bound * 4;
+  ctx.fillStyle = 'rgba(86,106,140,' + (0.18 - bound * 0.06).toFixed(2) + ')';
+  ctx.beginPath(); ctx.ellipse(x, y + 2, 9 + bound * 2, 3, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.save();
+  ctx.translate(x, y - lift);
+  ctx.rotate(Math.sin(ph2) * 0.12);
+  // legs: pairs gather then extend
+  var fl = Math.sin(ph2) * 4, bl = Math.sin(ph2 + Math.PI * 0.7) * 4;
+  ctx.strokeStyle = '#7a5538'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(5, -4); ctx.lineTo(7 + fl, 2);
+  ctx.moveTo(3, -4); ctx.lineTo(5 + fl * 0.8, 2.4);
+  ctx.moveTo(-5, -4); ctx.lineTo(-7 + bl, 2);
+  ctx.moveTo(-3, -4); ctx.lineTo(-5 + bl * 0.8, 2.4);
+  ctx.stroke();
+  ctx.lineCap = 'butt';
+  // body stretches with the leap
+  ctx.fillStyle = '#8a6240';
+  ctx.beginPath(); ctx.ellipse(0, -6, 9 * (1 + stretch), 4.6 * (1 - stretch * 0.8), 0, 0, Math.PI * 2); ctx.fill();
+  // chest ruff
+  ctx.fillStyle = '#a57d52';
+  ctx.beginPath(); ctx.ellipse(4, -5.4, 4, 3.2, 0, 0, Math.PI * 2); ctx.fill();
+  // head, muzzle, flopping ear
+  ctx.fillStyle = '#8a6240';
+  ctx.beginPath(); ctx.arc(9, -10, 4.2, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#a57d52';
+  ctx.beginPath(); ctx.ellipse(12, -9, 2.6, 1.8, 0.2, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#50391f';
+  ctx.beginPath();
+  ctx.moveTo(7, -13);
+  ctx.quadraticCurveTo(5.4, -15 + bound * 2.4, 4.4, -11.6);
+  ctx.closePath(); ctx.fill();
+  // nose and eye
+  ctx.beginPath(); ctx.arc(13.6, -9.6, 1.3, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(9.6, -11, 1, 0, Math.PI * 2); ctx.fill();
+  // wagging tail
+  ctx.strokeStyle = '#8a6240'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-8, -8);
+  ctx.quadraticCurveTo(-13, -13 + Math.sin(gTime * 16 + u.ph) * 2.5, -15, -10);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawScarf(){
+  ctx.lineCap = 'round';
+  for (var i = 1; i < scarf.length; i++){
+    var wBase = Math.max(1.2, 4.6 - i * 0.4);
+    // underside shadow
+    ctx.strokeStyle = '#a8241d';
+    ctx.lineWidth = wBase + 1.2;
+    ctx.beginPath();
+    ctx.moveTo(scarf[i - 1].x, scarf[i - 1].y + 0.8);
+    ctx.lineTo(scarf[i].x, scarf[i].y + 0.8);
+    ctx.stroke();
+    // cloth with knit stripes along its length
+    ctx.strokeStyle = (i % 3 === 0) ? '#e8554c' : '#d9372f';
+    ctx.lineWidth = wBase;
+    ctx.beginPath();
+    ctx.moveTo(scarf[i - 1].x, scarf[i - 1].y);
+    ctx.lineTo(scarf[i].x, scarf[i].y);
+    ctx.stroke();
+  }
+  // tassels at the tail
+  var tip = scarf[scarf.length - 1], prev = scarf[scarf.length - 2];
+  var tdx = tip.x - prev.x, tdy = tip.y - prev.y;
+  var tl = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+  ctx.strokeStyle = '#a8241d'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (var k = -1; k <= 1; k++){
+    ctx.moveTo(tip.x, tip.y);
+    ctx.lineTo(tip.x + tdx / tl * 4 + k * 2, tip.y + tdy / tl * 4 + 2);
+  }
+  ctx.stroke();
+  ctx.lineCap = 'butt';
+}
+
+var wasAir = false, wasTumble = false, carveSprayAcc = 0;
+
+function drawPlayer(){
+  var p = player;
+  var x = sx(p.wx), y = sy(p.wy);
+  var deg = ANGLE_DEG[Math.abs(p.ai)] * Math.PI / 180;
+  var ang = (p.ai < 0 ? -1 : 1) * deg;
+  var lean = p.ai / MAX_AI;
+
+  // cosmetic snow bursts keyed off state transitions
+  if (state === 'play' && !paused){
+    if (wasAir && !p.air && p.tumble <= 0) spawnSpray(p.wx, p.wy, 16, 150, 60);   // landing
+    if (!wasTumble && p.tumble > 0) spawnSpray(p.wx, p.wy, 14, 120, 40);          // wipeout
+    if (!p.air && p.tumble <= 0 && Math.abs(p.ai) >= 3 && p.speed > 180){
+      carveSprayAcc += gfxDt;
+      if (carveSprayAcc > 0.05){
+        carveSprayAcc = 0;
+        spawnSpray(p.wx - Math.sin(ang) * 6, p.wy - Math.cos(ang) * 6, 1, 70, 20);
+      }
+    }
+    wasAir = p.air; wasTumble = p.tumble > 0;
+  }
+
+  // soft ground shadow, drifting away from the body with height
+  var shA = Math.max(0.05, 0.2 - p.z * 0.001);
+  ctx.fillStyle = 'rgba(76,96,128,' + shA.toFixed(3) + ')';
+  ctx.beginPath();
+  ctx.ellipse(x + p.z * 0.06, y + 3, 13 + p.z * 0.05, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(76,96,128,' + (shA * 0.6).toFixed(3) + ')';
+  ctx.beginPath();
+  ctx.ellipse(x + p.z * 0.06, y + 3, 8 + p.z * 0.03, 3.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y - p.z);
+
+  if (p.tumble > 0){
+    // ragdoll tumble: frame-stepped flailing
+    var fr = Math.floor(gTime * 14) % 4;
+    ctx.rotate((1.1 - p.tumble) * 9 + fr * 0.2);
+    // loose crossed skis
+    ctx.strokeStyle = '#c23b2e'; ctx.lineWidth = 2.4; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-13, -5 + fr); ctx.lineTo(10, 7 - fr);
+    ctx.moveTo(-9, 9 - fr); ctx.lineTo(13, -6 + fr);
+    ctx.stroke();
+    // flailing limbs, four-frame cycle
+    var L = [
+      [-10, -9, 11, 5, -8, 10, 9, -8],
+      [-12, -2, 9, -10, -5, 11, 12, 3],
+      [-8, -11, 12, -2, -11, 6, 7, 11],
+      [-11, 4, 8, -11, -7, -10, 12, 8]
+    ][fr];
+    ctx.strokeStyle = '#27304a'; ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(0, 2); ctx.lineTo(L[4], L[5]);
+    ctx.moveTo(0, 2); ctx.lineTo(L[6], L[7]);
+    ctx.stroke();
+    ctx.strokeStyle = '#d9372f';
+    ctx.beginPath();
+    ctx.moveTo(0, -6); ctx.lineTo(L[0], L[1]);
+    ctx.moveTo(0, -6); ctx.lineTo(L[2], L[3]);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    // jacket torso
+    ctx.fillStyle = '#d9372f';
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(-6, -9, 12, 13, 3); else ctx.rect(-6, -9, 12, 13);
+    ctx.fill();
+    // head whipping around, goggles askew
+    var hx2 = Math.sin(gTime * 20) * 4;
+    ctx.fillStyle = '#f0c8a0';
+    ctx.beginPath(); ctx.arc(hx2, -14, 4.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2a2f3a';
+    ctx.fillRect(hx2 - 4, -16, 8, 2.4);
+    ctx.restore();
+    return;
+  }
+
+  ctx.rotate(-ang);
+  if (p.spinning) ctx.rotate(p.spin * Math.PI * 2);
+
+  var tuck = p.tuck && !p.air;
+  var bh = tuck ? 9 : 14;
+  var hipX = lean * 2.2;   // weight shifts over the carving ski
+
+  // skis: red with bright tips, inside ski leading through the carve
+  var lead = lean * 2.5;
+  ctx.strokeStyle = '#c23b2e'; ctx.lineWidth = 2.6; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-4.5, -8 + lead); ctx.lineTo(-4.5, 14 + lead);
+  ctx.moveTo(4.5, -8 - lead); ctx.lineTo(4.5, 14 - lead);
+  ctx.stroke();
+  ctx.strokeStyle = '#ef7a6d';
+  ctx.beginPath();
+  ctx.moveTo(-4.5, 11 + lead); ctx.lineTo(-4.5, 14 + lead);
+  ctx.moveTo(4.5, 11 - lead); ctx.lineTo(4.5, 14 - lead);
+  ctx.stroke();
+  ctx.lineCap = 'butt';
+  // legs angled into the hill
+  ctx.strokeStyle = '#27304a'; ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-4.5 + lead * 0.2, 2); ctx.lineTo(-3.5 + hipX, -4);
+  ctx.moveTo(4.5 - lead * 0.2, 2); ctx.lineTo(3.5 + hipX, -4);
+  ctx.stroke();
+  // boots
+  ctx.fillStyle = '#1b2234';
+  ctx.fillRect(-6 + lead * 0.2, 0, 3.4, 4);
+  ctx.fillRect(2.6 - lead * 0.2, 0, 3.4, 4);
+
+  // upper body: leans with the carve, drops into the tuck
+  ctx.save();
+  ctx.translate(hipX, 0);
+  ctx.rotate(lean * 0.22 + (p.air && !p.spinning ? Math.sin(gTime * 6) * 0.04 : 0));
+  // jacket with highlight-to-shade gradient
+  var jg = ctx.createLinearGradient(-6, -bh - 4, 6, 2);
+  jg.addColorStop(0, '#e8554c');
+  jg.addColorStop(1, '#c22c22');
+  ctx.fillStyle = jg;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(-6, -bh - 4, 12, bh + 6, 3); else ctx.rect(-6, -bh - 4, 12, bh + 6);
+  ctx.fill();
+  // zipper and hem
+  ctx.strokeStyle = 'rgba(80,16,10,0.55)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, -bh - 3); ctx.lineTo(0, 0); ctx.stroke();
+  ctx.fillStyle = 'rgba(80,16,10,0.35)';
+  ctx.fillRect(-6, -1, 12, 2.4);
+
+  // arms: pose per state
+  ctx.strokeStyle = '#d9372f'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath();
+  var poleA = null, poleB = null;
+  if (p.air && p.spinning){
+    // trick: one fist punched high, the other down grabbing the ski
+    ctx.moveTo(-5, -bh + 1); ctx.lineTo(-9, -bh - 13);
+    ctx.moveTo(5, -bh + 1); ctx.lineTo(7, 6);
+  } else if (p.air){
+    // flight: arms swept back, scarf streaming
+    ctx.moveTo(-6, -bh + 1); ctx.lineTo(-12, -bh + 10);
+    ctx.moveTo(6, -bh + 1); ctx.lineTo(12, -bh + 10);
+    poleA = [-12, -bh + 10]; poleB = [12, -bh + 10];
+  } else if (tuck){
+    // tuck: elbows pinned, fists under the chin
+    ctx.moveTo(-5.5, -bh + 2); ctx.lineTo(-3, -bh - 2);
+    ctx.moveTo(5.5, -bh + 2); ctx.lineTo(3, -bh - 2);
+    poleA = [-4, -bh + 3]; poleB = [4, -bh + 3];
+  } else {
+    // carving: inside arm drives forward, outside arm balances wide
+    var ia = lean * 4;
+    ctx.moveTo(-6, -bh + 2); ctx.lineTo(-10 - ia, -bh + 7 + lean * 2);
+    ctx.moveTo(6, -bh + 2); ctx.lineTo(10 - ia, -bh + 7 - lean * 2);
+    poleA = [-10 - ia, -bh + 7 + lean * 2]; poleB = [10 - ia, -bh + 7 - lean * 2];
+  }
+  ctx.stroke();
+  ctx.lineCap = 'butt';
+  // poles
+  if (poleA){
+    ctx.strokeStyle = '#556070'; ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    if (tuck){
+      // tucked under the arms, tips trailing uphill
+      ctx.moveTo(poleA[0], poleA[1]); ctx.lineTo(poleA[0] - 4, poleA[1] - 12);
+      ctx.moveTo(poleB[0], poleB[1]); ctx.lineTo(poleB[0] + 4, poleB[1] - 12);
+    } else if (p.air){
+      ctx.moveTo(poleA[0], poleA[1]); ctx.lineTo(poleA[0] - 3, poleA[1] - 10);
+      ctx.moveTo(poleB[0], poleB[1]); ctx.lineTo(poleB[0] + 3, poleB[1] - 10);
+    } else {
+      ctx.moveTo(poleA[0], poleA[1]); ctx.lineTo(poleA[0] - 1.5, 10);
+      ctx.moveTo(poleB[0], poleB[1]); ctx.lineTo(poleB[0] + 1.5, 10);
+    }
+    ctx.stroke();
+    if (!tuck && !p.air){
+      // pole baskets
+      ctx.fillStyle = '#556070';
+      ctx.fillRect(poleA[0] - 3.2, 8.6, 3.4, 1.4);
+      ctx.fillRect(poleB[0] - 0.2, 8.6, 3.4, 1.4);
+    }
+  }
+
+  // head: face with rosy cheeks, goggles with a sky glint, bobble hat
+  var hy = -bh - 8;
+  ctx.fillStyle = '#f0c8a0';
+  ctx.beginPath(); ctx.arc(0, hy, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(224,120,100,0.5)';
+  ctx.beginPath(); ctx.arc(-2.6, hy + 2, 1.2, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(2.6, hy + 2, 1.2, 0, Math.PI * 2); ctx.fill();
+  // goggles
+  ctx.fillStyle = '#2a2f3a';
+  ctx.fillRect(-5.2, hy - 2.6, 10.4, 1.4);
+  ctx.fillStyle = '#394257';
+  if (ctx.roundRect){ ctx.beginPath(); ctx.roundRect(-4.4, hy - 3.2, 8.8, 4, 2); ctx.fill(); }
+  else ctx.fillRect(-4.4, hy - 3.2, 8.8, 4);
+  var lg = ctx.createLinearGradient(-4, hy - 3, 4, hy + 1);
+  lg.addColorStop(0, '#9fd8f0');
+  lg.addColorStop(1, '#4f8fc4');
+  ctx.fillStyle = lg;
+  if (ctx.roundRect){ ctx.beginPath(); ctx.roundRect(-3.6, hy - 2.6, 7.2, 2.9, 1.4); ctx.fill(); }
+  else ctx.fillRect(-3.6, hy - 2.6, 7.2, 2.9);
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.fillRect(-2.8, hy - 2.2, 2.2, 1);
+  // hat with band and bobble
+  ctx.fillStyle = '#17315e';
+  ctx.beginPath(); ctx.arc(0, hy - 2.6, 5, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = '#1d4e9a';
+  ctx.fillRect(-5, hy - 3.4, 10, 1.6);
+  ctx.fillStyle = '#d9372f';
+  ctx.beginPath(); ctx.arc(0, hy - 7.6, 2, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.beginPath(); ctx.arc(-0.6, hy - 8.2, 0.7, 0, Math.PI * 2); ctx.fill();
+
+  ctx.restore();
+  ctx.restore();
+
+  // invulnerable blink ring
+  if (p.invuln > 0 && (gTime * 10 | 0) % 2 === 0){
+    ctx.strokeStyle = 'rgba(217,55,47,0.4)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(x, y - p.z - 8, 18, 0, Math.PI * 2); ctx.stroke();
+  }
+}
+
+function drawMonster(m, eating){
+  var x = sx(m.wx), y = sy(m.wy);
+  var hop = eating ? 0 : Math.abs(Math.sin(m.legT * 9)) * 6;
+  var sc = eating ? 1.25 : 1;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(sc, sc);
+
+  // shadow
+  ctx.fillStyle = 'rgba(70,90,120,0.22)';
+  ctx.beginPath(); ctx.ellipse(0, 4, 24, 8, 0, 0, Math.PI * 2); ctx.fill();
+
+  ctx.translate(0, -hop);
+
+  // legs
+  var lk = eating ? 0 : Math.sin(m.legT * 9) * 7;
+  ctx.strokeStyle = '#aeb6c4'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-9, -8); ctx.lineTo(-11 - lk, 4);
+  ctx.moveTo(9, -8); ctx.lineTo(11 + lk, 4);
+  ctx.stroke();
+  // body
+  ctx.fillStyle = '#c6cdd9';
+  ctx.beginPath(); ctx.ellipse(0, -24, 20, 23, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#dde3ec';
+  ctx.beginPath(); ctx.ellipse(0, -18, 12, 14, 0, 0, Math.PI * 2); ctx.fill();
+  // arms
+  ctx.strokeStyle = '#aeb6c4'; ctx.lineWidth = 7;
+  if (eating){
+    var lift = Math.min(1, eatT / 0.6);
+    ctx.beginPath();
+    ctx.moveTo(-16, -30); ctx.lineTo(-24, -30 - 22 * lift);
+    ctx.moveTo(16, -30); ctx.lineTo(24, -30 - 22 * lift);
+    ctx.stroke();
+  } else {
+    var swing = Math.sin(m.legT * 9 + Math.PI) * 8;
+    ctx.beginPath();
+    ctx.moveTo(-16, -28); ctx.lineTo(-24, -16 + swing);
+    ctx.moveTo(16, -28); ctx.lineTo(24, -16 - swing);
+    ctx.stroke();
+  }
+  ctx.lineCap = 'butt';
+  // claws
+  ctx.fillStyle = '#7e8798';
+  // head
+  ctx.fillStyle = '#c6cdd9';
+  ctx.beginPath(); ctx.arc(0, -48, 13, 0, Math.PI * 2); ctx.fill();
+  // horns
+  ctx.strokeStyle = '#8f98a8'; ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-9, -56); ctx.quadraticCurveTo(-14, -62, -11, -66);
+  ctx.moveTo(9, -56); ctx.quadraticCurveTo(14, -62, 11, -66);
+  ctx.stroke();
+  // eyes
+  ctx.fillStyle = '#2a2f3a';
+  ctx.beginPath();
+  ctx.arc(-4.5, -51, 2.2, 0, Math.PI * 2);
+  ctx.arc(4.5, -51, 2.2, 0, Math.PI * 2);
+  ctx.fill();
+  // mouth: open while chomping / chasing roar
+  var open = eating
+    ? (Math.abs(((eatT * 2) % 2) - 1) < 0.35 && eatT > 0.7 && eatT < 2.2 ? 7 : 2)
+    : (m.phase === 'chase' ? 5 : 2);
+  ctx.fillStyle = '#5a2430';
+  ctx.beginPath(); ctx.ellipse(0, -43, 7, open, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff';
+  for (var i = -1; i <= 1; i++){
+    ctx.beginPath();
+    ctx.moveTo(i * 4 - 1.6, -43 - open + 1);
+    ctx.lineTo(i * 4, -43 - open + 4.5);
+    ctx.lineTo(i * 4 + 1.6, -43 - open + 1);
+    ctx.closePath(); ctx.fill();
+  }
+
+  if (eating){
+    // the skier, held aloft and shrinking with each chomp
+    var lift2 = Math.min(1, eatT / 0.6);
+    var bites = (eatT > 2.0) ? 3 : (eatT > 1.5) ? 2 : (eatT > 1.0) ? 1 : 0;
+    var vs = 1 - bites / 3;
+    if (vs > 0){
+      ctx.save();
+      ctx.translate(0, -52 - 26 * lift2);
+      ctx.rotate(Math.sin(eatT * 12) * 0.35);
+      ctx.scale(vs, vs);
+      ctx.fillStyle = '#d9372f'; ctx.fillRect(-5, -7, 10, 12);
+      ctx.fillStyle = '#f0c8a0';
+      ctx.beginPath(); ctx.arc(0, -11, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#333'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-4, 5); ctx.lineTo(-7, 12);
+      ctx.moveTo(4, 5); ctx.lineTo(7, 12);
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (eatT > 2.4){
+      // the toothpick
+      ctx.strokeStyle = '#b89668'; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(4, -42);
+      ctx.lineTo(13, -36 + Math.sin(gTime * 3) * 1.5);
+      ctx.stroke();
+      // belly pat
+      ctx.strokeStyle = '#aeb6c4'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-16, -30);
+      ctx.lineTo(-8 + Math.sin(gTime * 6) * 3, -20);
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+    }
+  }
+  ctx.restore();
+}
+
+function drawFloats(){
+  ctx.textAlign = 'center';
+  for (var i = 0; i < floats.length; i++){
+    var f = floats[i];
+    var a = 1 - f.t / 1.4;
+    ctx.font = (f.big ? '700 26px' : '700 15px') + ' "Courier New", monospace';
+    ctx.fillStyle = 'rgba(35,48,72,' + a.toFixed(2) + ')';
+    ctx.fillText(f.txt, sx(f.x), sy(f.y) - 30 - f.t * 34);
+  }
+}
+
+function drawBlizzard(){
+  if (blizzA <= 0.01) return;
+  // darkened sky
+  ctx.fillStyle = 'rgba(40,56,88,' + (0.3 * blizzA).toFixed(3) + ')';
+  ctx.fillRect(0, 0, W, H);
+  // driving snow
+  ctx.fillStyle = 'rgba(255,255,255,' + (0.85 * blizzA).toFixed(2) + ')';
+  for (var i = 0; i < flakes.length; i++){
+    var f = flakes[i];
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill();
+  }
+  // visibility closes to a soft circle around the skier
+  var px = sx(player.wx), py = sy(player.wy) - player.z;
+  var inner = Math.max(90, Math.min(W, H) * (0.55 - 0.36 * blizzA));
+  var outer = inner * 2.1;
+  var g = ctx.createRadialGradient(px, py, inner, px, py, outer);
+  g.addColorStop(0, 'rgba(208,219,238,0)');
+  g.addColorStop(1, 'rgba(203,214,234,' + (0.93 * blizzA).toFixed(2) + ')');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawFlourish(){
+  if (flourishT <= 0) return;
+  var life = 1.1;
+  var t = (life - flourishT) / life;
+  var a = flourishT / life;
+  var px = sx(player.wx), py = sy(player.wy) - player.z;
+  for (var i = 0; i < 3; i++){
+    ctx.strokeStyle = 'rgba(45,111,209,' + (a * 0.5).toFixed(2) + ')';
+    ctx.lineWidth = 3 - i * 0.8;
+    ctx.beginPath(); ctx.arc(px, py, 26 + t * 260 + i * 28, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(120,170,255,' + (a * 0.08).toFixed(3) + ')';
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawPause(){
+  ctx.fillStyle = 'rgba(10,14,24,0.55)';
+  ctx.fillRect(0, 0, W, H);
+  pText('PAUSED', H * 0.5 - 8, 34, '#eef3fa');
+  pText('P — RESUME', H * 0.5 + 28, 13, '#8fa2c4');
+}
+
+function hudText(txt, x, y, size, col, align){
+  ctx.font = '700 ' + size + 'px "Courier New", monospace';
+  ctx.textAlign = align || 'left';
+  ctx.fillStyle = 'rgba(246,249,253,0.85)';
+  ctx.fillText(txt, x + 1, y + 1);
+  ctx.fillStyle = col;
+  ctx.fillText(txt, x, y);
+}
+
+function drawHUD(){
+  var kmh = Math.round(player.speed / PPM * 3.6);
+  hudText(Math.floor(dist) + ' m', 16, 30, 22, '#233048');
+  hudText('SPEED ' + kmh + ' km/h' + (player.tuck && !player.air ? '  TUCK' : ''), 16, 52, 13, '#51607c');
+  hudText('STYLE ' + style + ' ★' + (trickChain > 1 ? '  CHAIN x' + trickChain : ''), 16, 72, 13, trickChain > 1 ? '#2d6fd1' : '#51607c');
+  if (combo > 1) hudText('GATE COMBO x' + combo, 16, 92, 13, '#2d6fd1');
+  hudText('BEST ' + best + ' m', W - 16, 30, 14, '#51607c', 'right');
+  if (dailyMode) hudText('DAILY ' + todayStr, W - 16, 48, 11, '#2d6fd1', 'right');
+  hudText((muted ? 'M · SOUND OFF' : 'M · SOUND ON') + '  ·  P · PAUSE', W - 16, H - 20, 11, '#7c8aa3', 'right');
+  if (player.air && player.pendStyle > 0){
+    hudText('+' + player.pendStyle + ' pending...', sx(player.wx), sy(player.wy) - player.z - 46, 12, '#2d6fd1', 'center');
+  }
+  if (monster1Done && state === 'play'){
+    var m = monsters[0];
+    if (m && m.wy < camY - 40){
+      hudText('↓ IT IS BEHIND YOU ↓', W / 2, 26, 13, '#a3302a', 'center');
+    }
+  }
+}
+
+function panel(x, y, w, h){
+  ctx.fillStyle = 'rgba(16,22,36,0.82)';
+  ctx.strokeStyle = 'rgba(140,160,210,0.45)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, w, h, 12); else ctx.rect(x, y, w, h);
+  ctx.fill(); ctx.stroke();
+}
+function pText(txt, y, size, col){
+  ctx.font = '700 ' + size + 'px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = col;
+  ctx.fillText(txt, W / 2, y);
+}
+
+function drawTitle(){
+  var cy = H * 0.5;
+  panel(W / 2 - 240, cy - 200, 480, 408);
+  pText('S K I', cy - 140, 52, '#eef3fa');
+  pText('— endless downhill —', cy - 110, 14, '#8fa2c4');
+  if (isTouch){
+    pText('HOLD LEFT / RIGHT half ...... carve', cy - 64, 13, '#cfd8ea');
+    pText('TWO FINGERS ................. tuck', cy - 42, 13, '#cfd8ea');
+    pText('SWIPE UP in the air ........ trick', cy - 20, 13, '#cfd8ea');
+  } else {
+    pText('LEFT / RIGHT or A / D ....... carve', cy - 64, 13, '#cfd8ea');
+    pText('DOWN or S ................... tuck', cy - 42, 13, '#cfd8ea');
+    pText('UP / SPACE in the air ...... trick', cy - 20, 13, '#cfd8ea');
+  }
+  pText('gates = combo · chained tricks multiply', cy + 6, 13, '#8fa2c4');
+  pText('ramps = air · M mute · P pause', cy + 24, 13, '#8fa2c4');
+  pText('do not get eaten.', cy + 46, 13, '#d98079');
+  pText('BEST ' + best + ' m', cy + 74, 15, '#eef3fa');
+  var db = (daily && daily.date === todayStr) ? daily.dist + ' m' : '--';
+  pText((isTouch ? 'TAP HERE' : 'D') + ' — DAILY CHALLENGE  ·  best today ' + db, cy + 106, 13, '#7ea8e8');
+  if ((gTime * 1.5 | 0) % 2 === 0) pText(isTouch ? 'TAP TO SKI' : 'PRESS ENTER', cy + 148, 17, '#ffffff');
+  // decorative skier
+  ctx.save();
+  ctx.translate(W / 2 + 185, cy - 125);
+  ctx.rotate(0.3);
+  ctx.strokeStyle = '#d9372f'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-8, -14); ctx.lineTo(-14, -2); ctx.moveTo(8, -14); ctx.lineTo(14, -2); ctx.stroke();
+  ctx.fillStyle = '#d9372f'; ctx.fillRect(-7, -20, 14, 18);
+  ctx.fillStyle = '#f0c8a0'; ctx.beginPath(); ctx.arc(0, -26, 6, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#17315e'; ctx.beginPath(); ctx.arc(0, -28, 6, Math.PI, 0); ctx.fill();
+  ctx.strokeStyle = '#c23b2e'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(-6, 2); ctx.lineTo(-6, 22); ctx.moveTo(6, 2); ctx.lineTo(6, 22); ctx.stroke();
+  ctx.lineCap = 'butt';
+  ctx.restore();
+}
+
+function drawOver(){
+  var cy = H * 0.5;
+  panel(W / 2 - 230, cy - 160, 460, 340);
+  pText('EATEN.', cy - 108, 40, '#d98079');
+  pText(dailyMode ? 'daily challenge · ' + todayStr : 'the mountain always wins', cy - 80, 12, '#8fa2c4');
+  pText('DISTANCE  ' + Math.floor(dist) + ' m' + (newBest ? '   ★ NEW BEST ★' : ''), cy - 36, 16, '#eef3fa');
+  pText('STYLE     ' + style, cy - 10, 14, '#cfd8ea');
+  pText('GATES     ' + gatesPassed + '  (best combo x' + bestCombo + ')', cy + 14, 14, '#cfd8ea');
+  pText('TRICKS    ' + tricksDone, cy + 38, 14, '#cfd8ea');
+  if (dailyMode && daily && daily.date === todayStr){
+    pText('DAILY BEST ' + daily.dist + ' m  ·  ALL-TIME ' + best + ' m', cy + 62, 14, '#7ea8e8');
+  } else {
+    pText('BEST      ' + best + ' m', cy + 62, 14, '#8fa2c4');
+  }
+  pText(isTouch ? '' : 'T — TITLE', cy + 90, 12, '#8fa2c4');
+  if ((gTime * 1.5 | 0) % 2 === 0) pText(isTouch ? 'TAP — RESTART' : 'ENTER / R — RESTART', cy + 128, 15, '#ffffff');
+}
+
+/* ---------------- main draw ---------------- */
+function draw(){
+  ctx.save();
+  if (shake > 0 && !arcade.reducedMotion()){
+    ctx.translate(rnd(-shake, shake) * 0.5, rnd(-shake, shake) * 0.5);
+  }
+
+  drawSnow();
+  drawPatches();
+  drawTrail();
+  for (var i = 0; i < ramps.length; i++) drawRamp(ramps[i]);
+
+  // painter's sort for upright things
+  var items = [];
+  for (var a = 0; a < obs.length; a++){
+    (function(o){
+      items.push({ y: o.y, f: function(){
+        if (o.t === 'tree') drawTree(o);
+        else if (o.t === 'rock') drawRock(o);
+        else if (o.t === 'mogul') drawMogul(o);
+        else drawStump(o);
+      }});
+    })(obs[a]);
+  }
+  for (var b = 0; b < gates.length; b++){
+    (function(g){ items.push({ y: g.y, f: function(){ drawGate(g); } }); })(gates[b]);
+  }
+  for (var c = 0; c < npcs.length; c++){
+    (function(u){ items.push({ y: u.y, f: function(){
+      if (u.t === 'skier') drawLittleSkier(u);
+      else if (u.t === 'boarder') drawBoarder(u);
+      else drawDog(u);
+    }});})(npcs[c]);
+  }
+  if (state === 'play' || state === 'eaten' || state === 'over'){
+    if (!(state === 'eaten' || (state === 'over' && eater))){
+      items.push({ y: player.wy, f: drawPlayer });
+    }
+    for (var d2 = 0; d2 < monsters.length; d2++){
+      (function(m){
+        items.push({ y: m.wy, f: function(){ drawMonster(m, m === eater); } });
+      })(monsters[d2]);
+    }
+  }
+  items.sort(function(p1, p2){ return p1.y - p2.y; });
+  for (var e2 = 0; e2 < items.length; e2++) items[e2].f();
+
+  if (state === 'play' && !player.air && player.tumble <= 0) drawScarf();
+  drawFloats();
+  ctx.restore();
+
+  if (state === 'play' || state === 'eaten'){
+    drawBlizzard();
+    drawFlourish();
+  }
+
+  if (state === 'title') drawTitle();
+  else if (state === 'over') drawOver();
+  else drawHUD();
+
+  if (state === 'play' && paused) drawPause();
+}
+
+/* ---------------- loop ---------------- */
+var last = performance.now();
+function frame(now){
+  var dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+
+<a href="index.html" class="hub-link" style="bottom:14px;left:14px">&lt; ARCADE</a>
+<style>
+.hub-link{position:fixed;z-index:10000;font:700 11px/1 "Courier New",monospace;letter-spacing:2px;
+color:#cfd8ea;background:rgba(10,12,20,.72);border:1px solid rgba(140,160,210,.4);
+padding:8px 12px;border-radius:999px;text-decoration:none;opacity:.55;transition:opacity .15s;cursor:pointer;}
+.hub-link:hover{opacity:1;color:#fff;}
+</style>
+</body>
+</html>

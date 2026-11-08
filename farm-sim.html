@@ -1,0 +1,2271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tiny Acres — Farm &amp; Village Sim</title>
+<style>
+  :root{
+    --bg:#1f2b1a; --ink:#f3e7c8;
+    --gold:#ffd95e; --accent:#cfe8a0; --red:#e07a5f; --dim:#d9c49c;
+    --woodBrd:#352110; --woodDk:#4a3118;
+    --carve:0 1px 0 rgba(255,232,180,.28), 0 -1px 1px rgba(0,0,0,.65);
+    --woodGrain:
+      linear-gradient(180deg, rgba(255,240,200,.10) 0%, rgba(255,240,200,.02) 20%, rgba(0,0,0,.08) 78%, rgba(0,0,0,.22) 100%),
+      repeating-linear-gradient(90deg, rgba(0,0,0,0) 0 32px, rgba(50,28,10,.28) 32px 34px),
+      repeating-linear-gradient(0deg, rgba(255,220,160,.05) 0 2px, rgba(0,0,0,.04) 2px 5px),
+      linear-gradient(100deg, #7a5634 0%, #6b4a2b 55%, #7a5634 100%);
+    --woodShadow:inset 0 2px 0 rgba(255,235,190,.16), inset 0 -4px 8px rgba(0,0,0,.35), 0 6px 14px rgba(0,0,0,.5);
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{
+    background:var(--bg);
+    background-image:
+      radial-gradient(circle at 30% 8%, rgba(130,170,90,.16) 0%, rgba(0,0,0,0) 55%),
+      radial-gradient(circle at 75% 95%, rgba(20,16,8,.55) 0%, rgba(0,0,0,0) 65%),
+      linear-gradient(180deg, #27381f 0%, #1b2816 100%);
+    color:var(--ink);
+    font-family:"Trebuchet MS", Verdana, sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    min-height:100vh; padding:12px; gap:10px;
+  }
+  h1{
+    font-size:20px; letter-spacing:2px; color:#ffe9b0;
+    text-shadow:0 -1px 1px rgba(0,0,0,.7), 0 1px 0 rgba(255,235,190,.2), 0 3px 6px rgba(0,0,0,.5);
+    user-select:none;
+  }
+  h1 .sub{font-size:11px; color:var(--dim); letter-spacing:1px; font-weight:normal;}
+  #hud{
+    display:flex; gap:14px; align-items:center; flex-wrap:wrap; justify-content:center;
+    background:var(--woodGrain); border:3px solid var(--woodBrd); border-radius:10px;
+    padding:8px 16px; box-shadow:var(--woodShadow);
+  }
+  .stat{display:flex; align-items:center; gap:6px; font-size:15px; font-weight:bold; text-shadow:var(--carve);}
+  .stat .ico{font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:1px;}
+  #goldV{color:var(--gold);} #popV{color:#bfe0ff;} #dayV{color:#ffc9e0;}
+  #clock{width:66px; height:10px; background:#241607; border-radius:5px; overflow:hidden; border:1px solid #180d04; box-shadow:inset 0 1px 3px rgba(0,0,0,.6);}
+  #clockFill{height:100%; width:0%; background:linear-gradient(90deg,#ffda6b,#ff9d5c); transition:width .3s linear;}
+  #toolbar{
+    display:flex; gap:6px; flex-wrap:wrap; justify-content:center; max-width:980px;
+    background:var(--woodGrain); border:3px solid var(--woodBrd); border-radius:10px; padding:8px;
+    box-shadow:var(--woodShadow);
+  }
+  .tool{
+    background:linear-gradient(180deg, #8a6340 0%, #6b4a2b 100%);
+    color:var(--ink); border:2px solid var(--woodDk);
+    border-radius:8px; padding:6px 9px; cursor:pointer; font-size:12px;
+    display:flex; flex-direction:column; align-items:center; gap:2px; min-width:72px;
+    transition:transform .06s ease, filter .1s;
+    font-family:inherit; text-shadow:var(--carve);
+    box-shadow:inset 0 1px 0 rgba(255,235,190,.22), inset 0 -2px 3px rgba(0,0,0,.3), 0 2px 3px rgba(0,0,0,.35);
+  }
+  .tool:hover{filter:brightness(1.12); transform:translateY(-1px);}
+  .tool.sel{
+    background:linear-gradient(180deg, #a07a46 0%, #7d5c33 100%);
+    border-color:var(--gold);
+    box-shadow:0 0 10px rgba(255,217,94,.5), inset 0 1px 0 rgba(255,235,190,.3);
+  }
+  .tool .tn{font-size:13px; font-weight:bold; line-height:1.2; letter-spacing:.4px;}
+  .tool .tc{font-size:10px; color:var(--gold);}
+  .tool .tk{font-size:9px; color:var(--dim);}
+  .tool.util{min-width:58px;}
+  .tool.danger:hover{filter:brightness(1.05) hue-rotate(-18deg) saturate(1.5);}
+  #main{display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; justify-content:center;}
+  #canvasWrap{position:relative; line-height:0;}
+  canvas{
+    border:6px solid #5a3b20; border-radius:8px; background:#355e3b;
+    box-shadow:inset 0 0 0 2px #352110, 0 10px 26px rgba(0,0,0,.55);
+    cursor:crosshair;
+    max-width:min(960px, 95vw); height:auto;
+  }
+  #tip{
+    position:absolute; pointer-events:none; display:none;
+    background:rgba(18,26,20,.93); border:1px solid #5a7050; border-radius:6px;
+    padding:4px 8px; font-size:11px; white-space:nowrap; z-index:5;
+    color:var(--ink); line-height:1.5; box-shadow:0 3px 8px rgba(0,0,0,.5);
+  }
+  #tip .bad{color:#ff9b8a;} #tip .ok{color:#b4e78a;} #tip .cost{color:var(--gold);}
+  #side{
+    width:230px; display:flex; flex-direction:column; gap:10px;
+  }
+  .box{
+    background:var(--woodGrain); border:3px solid var(--woodBrd); border-radius:10px;
+    padding:8px 10px; box-shadow:var(--woodShadow);
+  }
+  .box h2{font-size:12px; color:#ffe9b0; letter-spacing:1px; text-transform:uppercase; margin-bottom:6px; text-shadow:var(--carve);}
+  #log{list-style:none; max-height:240px; overflow-y:auto; font-size:11px; display:flex; flex-direction:column; gap:3px;}
+  #log li{color:var(--dim); border-left:2px solid var(--woodDk); padding-left:6px; line-height:1.35;}
+  #log li.good{color:#cfe8a0; border-color:#7a9a4a;}
+  #log li.bad{color:#ffb3a3; border-color:#a65347;}
+  #log li .d{color:#b89f72; font-size:10px;}
+  #miles{list-style:none; font-size:11px; display:flex; flex-direction:column; gap:4px;}
+  #miles li{color:var(--dim);}
+  #miles li.done{color:var(--gold);}
+  #miles li .chk{display:inline-block; width:14px;}
+  #toasts{
+    position:fixed; top:14px; left:50%; transform:translateX(-50%);
+    display:flex; flex-direction:column; gap:6px; z-index:50; pointer-events:none;
+  }
+  .toast{
+    background:var(--woodGrain); border:3px solid var(--gold); color:var(--gold);
+    border-radius:8px; padding:8px 18px; font-size:14px; font-weight:bold;
+    box-shadow:0 6px 18px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,235,190,.2);
+    animation:toastIn .3s ease, toastOut .5s ease 3s forwards;
+    text-align:center; text-shadow:var(--carve);
+  }
+  .toast .sub2{display:block; font-size:11px; color:var(--ink); font-weight:normal;}
+  @keyframes toastIn{from{opacity:0; transform:translateY(-14px);} to{opacity:1; transform:none;}}
+  @keyframes toastOut{to{opacity:0; transform:translateY(-10px);}}
+  #saveNote{font-size:10px; color:var(--dim); text-align:center;}
+  @media (max-width:1240px){ #side{width:min(960px,95vw); flex-direction:row; flex-wrap:wrap;} #side .box{flex:1; min-width:220px;} #log{max-height:120px;} }
+</style>
+</head>
+<body>
+<h1>TINY ACRES <span class="sub">— a wee farm &amp; village sim</span></h1>
+
+<div id="hud">
+  <div class="stat"><span class="ico">Gold</span><span id="goldV">0</span></div>
+  <div class="stat"><span class="ico">Pop</span><span id="popV">0</span></div>
+  <div class="stat">Day <span id="dayV">1</span></div>
+  <div class="stat"><span class="ico">Season</span><span id="seasonV">Spring</span></div>
+  <div class="stat"><span class="ico">Time</span><div id="clock"><div id="clockFill"></div></div></div>
+  <div class="stat" id="weatherV" style="font-weight:normal; font-size:12px; color:var(--dim);">A calm day</div>
+</div>
+
+<div id="toolbar"></div>
+
+<div id="main">
+  <div id="canvasWrap">
+    <canvas id="cv" width="960" height="640"></canvas>
+    <div id="tip"></div>
+  </div>
+  <div id="side">
+    <div class="box"><h2>Milestones</h2><ul id="miles"></ul></div>
+    <div class="box"><h2>Village Log</h2><ul id="log"></ul></div>
+    <div id="saveNote">Autosaves every 20s. Tip: drag to paint till/plant/harvest</div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<!-- arcade-shared:start -->
+<script>
+/* Arcade shared runtime.
+   Single source of truth for cross-game boilerplate. build-arcade.py injects
+   this into every game between the arcade-shared markers (and keeps the copies
+   in sync on each run) — edit THIS file, then run: python3 build-arcade.py */
+(function () {
+  "use strict";
+
+  /* ---- safe storage: never throws (Safari private mode, disabled storage) ---- */
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, String(v)); return true; } catch (e) { return false; } },
+    remove: function (k) { try { localStorage.removeItem(k); } catch (e) {} },
+    num: function (k) { var n = parseFloat(store.get(k)); return isFinite(n) ? n : 0; },
+    json: function (k) { try { return JSON.parse(store.get(k)); } catch (e) { return null; } }
+  };
+
+  /* ---- audio: one wrap of the AudioContext constructor gives us both
+     a tab-hidden auto-suspend and an arcade-wide master volume ----
+     Every context's .destination is rerouted through a shared gain node, so
+     the settings panel's master volume applies to every game with no per-game
+     wiring; the games' own volume sliders keep working underneath it.
+     Only contexts *we* suspended are resumed, so a game's own
+     mute-by-suspend behaviour is left alone. */
+  var contexts = [];
+  var autoSuspended = [];
+  var masters = [];
+  function masterLevel() {
+    if (store.get("arcade_master_muted") === "1") return 0;
+    var v = parseFloat(store.get("arcade_master"));
+    return isFinite(v) ? Math.min(Math.max(v, 0), 1) : 1;
+  }
+  function applyMaster() {
+    var lvl = masterLevel();
+    masters.forEach(function (g) {
+      try { g.gain.setTargetAtTime(lvl, g.context.currentTime, 0.02); } catch (e) {}
+    });
+  }
+  ["AudioContext", "webkitAudioContext"].forEach(function (name) {
+    var Orig = window[name];
+    if (!Orig) return;
+    function Patched() {
+      var ctx = arguments.length
+        ? new (Function.prototype.bind.apply(Orig, [null].concat([].slice.call(arguments))))()
+        : new Orig();
+      contexts.push(ctx);
+      try {
+        var realDest = ctx.destination;
+        var master = ctx.createGain();
+        master.gain.value = masterLevel();
+        master.connect(realDest);
+        Object.defineProperty(ctx, "destination", {
+          get: function () { return master; },
+          configurable: true
+        });
+        masters.push(master);
+      } catch (e) { /* master volume is best-effort */ }
+      return ctx;
+    }
+    Patched.prototype = Orig.prototype;
+    window[name] = Patched;
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      contexts.forEach(function (ctx) {
+        if (ctx.state === "running") {
+          autoSuspended.push(ctx);
+          ctx.suspend().catch(function () {});
+        }
+      });
+    } else {
+      autoSuspended.splice(0).forEach(function (ctx) {
+        if (ctx.state === "suspended") ctx.resume().catch(function () {});
+      });
+    }
+  });
+
+  /* ---- reduced motion: tame decorative CSS animation, expose a flag the
+     games consult for canvas effects (shake, flashes, particles). The OS
+     setting is the default; the settings panel can override it either way
+     (arcade_rm: "auto" | "on" | "off"). ---- */
+  var rmQuery = window.matchMedia ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+  function reducedMotion() {
+    var o = store.get("arcade_rm");
+    if (o === "on") return true;
+    if (o === "off") return false;
+    return !!(rmQuery && rmQuery.matches);
+  }
+  var rmStyle = document.createElement("style");
+  (document.head || document.documentElement).appendChild(rmStyle);
+  function syncRMStyle() {
+    rmStyle.textContent = reducedMotion()
+      ? "*,*::before,*::after{animation-duration:.01ms !important;" +
+        "animation-iteration-count:1 !important;transition-duration:.01ms !important;" +
+        "scroll-behavior:auto !important}"
+      : "";
+  }
+  syncRMStyle();
+  if (rmQuery && rmQuery.addEventListener) rmQuery.addEventListener("change", syncRMStyle);
+
+  /* ---- on-screen touch controls ----
+     Created on demand by a game calling arcade.touch.* at the end of its own
+     script. Nothing is shown unless the pointer is coarse (or ?touch=1 forces
+     them for testing). Key buttons synthesize keydown/keyup on window+document
+     with both .key and .code set, so games keep their existing handlers. */
+  var touchOn = (window.matchMedia && matchMedia("(pointer: coarse)").matches) ||
+                /[?&]touch=1\b/.test(location.search);
+  var touchLayer = null;
+  function ensureLayer() {
+    if (!touchLayer) {
+      touchLayer = document.createElement("div");
+      touchLayer.id = "arcade-touch";
+      touchLayer.style.cssText =
+        "position:fixed;inset:0;z-index:15000;pointer-events:none;" +
+        "user-select:none;-webkit-user-select:none";
+      (document.body || document.documentElement).appendChild(touchLayer);
+    }
+    return touchLayer;
+  }
+  function mkEl(style, size) {
+    var el = document.createElement("div");
+    el.style.cssText =
+      "position:absolute;pointer-events:auto;touch-action:none;box-sizing:border-box;" +
+      "width:" + size + "px;height:" + size + "px;border-radius:50%;" +
+      "background:rgba(140,160,210,.13);border:1px solid rgba(140,160,210,.45);" +
+      "color:rgba(232,236,248,.85);display:flex;align-items:center;justify-content:center;" +
+      "font:700 13px/1 system-ui,sans-serif;letter-spacing:1px;" + (style || "");
+    return el;
+  }
+  function sendKey(type, key, code) {
+    var ev = new KeyboardEvent(type, { key: key, code: code, bubbles: true, cancelable: true });
+    window.dispatchEvent(ev);
+    document.dispatchEvent(ev);
+  }
+  function touchButton(o) {
+    if (!touchOn) return null;
+    var el = mkEl(o.style, o.size || 54);
+    el.textContent = o.label || "";
+    if (o.label) el.dataset.k = o.label;
+    var timer = 0;
+    function down(e) {
+      e.preventDefault();
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
+      el.style.background = "rgba(140,160,210,.34)";
+      if (o.onDown) o.onDown();
+      if (o.repeat) timer = setInterval(function () { if (o.onDown) o.onDown(); }, o.repeat);
+    }
+    function up() {
+      el.style.background = "rgba(140,160,210,.13)";
+      if (timer) { clearInterval(timer); timer = 0; }
+      if (o.onUp) o.onUp();
+    }
+    el.addEventListener("pointerdown", down);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+    ensureLayer().appendChild(el);
+    return el;
+  }
+  function keyButton(o) {
+    var held = false;
+    return touchButton({
+      label: o.label, style: o.style, size: o.size, repeat: o.repeat,
+      onDown: function () { held = true; sendKey("keydown", o.key, o.code || o.key); },
+      onUp: function () { if (held) { held = false; sendKey("keyup", o.key, o.code || o.key); } }
+    });
+  }
+  function dpad(o) {
+    if (!touchOn) return;
+    var s = o.size || 52, g = o.gap || 6;
+    var bx = o.left != null ? o.left : 16, by = o.bottom != null ? o.bottom : 16;
+    function at(cx, cy) { return "left:" + cx + "px;bottom:" + cy + "px"; }
+    var m = o.map;
+    keyButton({ label: "▲", key: m.up.key, code: m.up.code, size: s, repeat: o.repeat, style: at(bx + s + g, by + 2 * (s + g)) });
+    keyButton({ label: "◀", key: m.left.key, code: m.left.code, size: s, repeat: o.repeat, style: at(bx, by + s + g) });
+    keyButton({ label: "▶", key: m.right.key, code: m.right.code, size: s, repeat: o.repeat, style: at(bx + 2 * (s + g), by + s + g) });
+    keyButton({ label: "▼", key: m.down.key, code: m.down.code, size: s, repeat: o.repeat, style: at(bx + s + g, by) });
+  }
+  function arrowDpad(o) {
+    o = o || {};
+    o.map = {
+      up: { key: "ArrowUp", code: "ArrowUp" }, down: { key: "ArrowDown", code: "ArrowDown" },
+      left: { key: "ArrowLeft", code: "ArrowLeft" }, right: { key: "ArrowRight", code: "ArrowRight" }
+    };
+    return dpad(o);
+  }
+  function stick(o) {
+    if (!touchOn) return null;
+    var size = o.size || 124;
+    var base = mkEl(o.style, size);
+    if (o.label) base.dataset.k = o.label;
+    var knob = document.createElement("div");
+    knob.style.cssText =
+      "position:absolute;width:44%;height:44%;border-radius:50%;pointer-events:none;" +
+      "background:rgba(140,160,210,.4);left:50%;top:50%;transform:translate(-50%,-50%)";
+    base.appendChild(knob);
+    var active = false;
+    function setKnob(nx, ny) {
+      knob.style.left = (50 + nx * 32) + "%";
+      knob.style.top = (50 + ny * 32) + "%";
+    }
+    function report(e) {
+      var r = base.getBoundingClientRect();
+      var dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+      var dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+      var mag = Math.hypot(dx, dy);
+      if (mag > 1) { dx /= mag; dy /= mag; }
+      setKnob(dx, dy);
+      if (o.onMove) o.onMove(dx, dy, true);
+    }
+    base.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      try { base.setPointerCapture(e.pointerId); } catch (err) {}
+      active = true;
+      report(e);
+    });
+    base.addEventListener("pointermove", function (e) { if (active) report(e); });
+    function end() {
+      if (!active) return;
+      active = false;
+      setKnob(0, 0);
+      if (o.onMove) o.onMove(0, 0, false);
+    }
+    base.addEventListener("pointerup", end);
+    base.addEventListener("pointercancel", end);
+    ensureLayer().appendChild(base);
+    return base;
+  }
+
+  /* ---- play-time heartbeat: the hub sorts and labels cards from this ----
+     Standalone pages identify themselves by filename; inside the all-in-one
+     bundle the overlay stamps data-arcade-game on the iframe. The smoke
+     harness's srcdoc frames carry no stamp, so test runs never pollute it. */
+  var GAME_ID = (function () {
+    try {
+      if (window.frameElement && window.frameElement.dataset.arcadeGame)
+        return window.frameElement.dataset.arcadeGame;
+      if (window.frameElement) return null; /* unstamped frame (smoke harness) */
+    } catch (e) { return null; }
+    var p = location.pathname.split("/").pop();
+    return /\.html$/.test(p) && ["index.html", "arcade.html", "smoke.html"].indexOf(p) === -1 ? p : null;
+  })();
+  if (GAME_ID) {
+    var visSince = document.hidden ? 0 : Date.now();
+    var metaFlush = function () {
+      var add = 0, now = Date.now();
+      if (visSince) { add = (now - visSince) / 1000; visSince = document.hidden ? 0 : now; }
+      else if (add === 0) return; /* hidden and idle: not "playing" */
+      var meta = store.json("arcade_meta_v1") || {};
+      var g = meta[GAME_ID] || (meta[GAME_ID] = { secs: 0 });
+      g.secs = Math.round((g.secs || 0) + add);
+      g.last = now;
+      store.set("arcade_meta_v1", JSON.stringify(meta));
+    };
+    metaFlush();
+    setInterval(metaFlush, 15000);
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { metaFlush(); visSince = 0; }
+      else visSince = Date.now();
+    });
+    window.addEventListener("pagehide", metaFlush);
+  }
+
+  /* ---- settings panel: gear chip on the right edge; Escape closes.
+     Master volume and motion apply to every game through the shared
+     runtime, so this is the same panel with the same behaviour everywhere. */
+  var panel = null, chip = null;
+  function settingsOpen() { return !!(panel && panel.style.display !== "none"); }
+  function motionLabel() {
+    var o = store.get("arcade_rm");
+    return o === "on" ? "MOTION: REDUCED" : o === "off" ? "MOTION: FULL" : "MOTION: AUTO";
+  }
+  function buildPanel() {
+    if (panel) return;
+    panel = document.createElement("div");
+    panel.id = "arcade-settings";
+    panel.style.cssText =
+      "position:fixed;inset:0;z-index:16000;display:none;" +
+      "background:rgba(4,6,12,.55);user-select:none;-webkit-user-select:none";
+    var card = document.createElement("div");
+    card.style.cssText =
+      "position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);" +
+      "min-width:260px;padding:22px 26px;border-radius:14px;" +
+      "background:rgba(14,17,30,.96);border:1px solid rgba(140,160,210,.4);" +
+      "color:#e8ecf8;font:13px/1.5 system-ui,sans-serif";
+    card.innerHTML =
+      '<div style="font:700 13px/1 system-ui;letter-spacing:3px;margin-bottom:16px">ARCADE SETTINGS</div>' +
+      '<label style="font-size:11px;letter-spacing:2px;color:#8b94b0">MASTER VOLUME</label><br>' +
+      '<input id="arc-set-vol" type="range" min="0" max="100" style="width:100%;margin:6px 0 14px">' +
+      '<button id="arc-set-mute" style="' + btnCss() + '"></button> ' +
+      '<button id="arc-set-rm" style="' + btnCss() + '"></button>' +
+      '<div style="font-size:11px;color:#8b94b0;margin-top:14px">Applies to every game. ' +
+      'Per-game volume controls still work underneath.<br>Esc closes.</div>';
+    panel.appendChild(card);
+    panel.addEventListener("pointerdown", function (e) { if (e.target === panel) toggleSettings(false); });
+    (document.body || document.documentElement).appendChild(panel);
+
+    var vol = card.querySelector("#arc-set-vol");
+    var mute = card.querySelector("#arc-set-mute");
+    var rm = card.querySelector("#arc-set-rm");
+    function syncUI() {
+      var v = parseFloat(store.get("arcade_master"));
+      vol.value = Math.round((isFinite(v) ? Math.min(Math.max(v, 0), 1) : 1) * 100);
+      mute.textContent = store.get("arcade_master_muted") === "1" ? "UNMUTE" : "MUTE";
+      rm.textContent = motionLabel();
+    }
+    vol.addEventListener("input", function () {
+      store.set("arcade_master", vol.value / 100);
+      store.set("arcade_master_muted", "0");
+      applyMaster(); syncUI();
+    });
+    mute.addEventListener("click", function () {
+      store.set("arcade_master_muted", store.get("arcade_master_muted") === "1" ? "0" : "1");
+      applyMaster(); syncUI();
+    });
+    rm.addEventListener("click", function () {
+      var o = store.get("arcade_rm");
+      store.set("arcade_rm", o === "on" ? "off" : o === "off" ? "auto" : "on");
+      syncRMStyle(); syncUI();
+    });
+    panel.syncUI = syncUI;
+  }
+  function btnCss() {
+    return "font:700 11px/1 system-ui;letter-spacing:2px;color:#cfd8ea;cursor:pointer;" +
+      "background:rgba(140,160,210,.12);border:1px solid rgba(140,160,210,.4);" +
+      "padding:8px 12px;border-radius:999px";
+  }
+  function toggleSettings(show) {
+    buildPanel();
+    var to = show != null ? show : !settingsOpen();
+    panel.style.display = to ? "block" : "none";
+    if (to) panel.syncUI();
+  }
+  function mountChip() {
+    if (chip || !document.body) return;
+    chip = document.createElement("div");
+    chip.id = "arcade-settings-chip";
+    chip.title = "Arcade settings";
+    chip.textContent = "⚙";
+    chip.style.cssText =
+      "position:fixed;right:8px;top:50%;transform:translateY(-50%);z-index:15990;" +
+      "width:30px;height:30px;border-radius:50%;display:flex;align-items:center;" +
+      "justify-content:center;cursor:pointer;font-size:15px;color:#cfd8ea;" +
+      "background:rgba(10,12,20,.6);border:1px solid rgba(140,160,210,.35);" +
+      "opacity:.4;transition:opacity .15s;user-select:none;-webkit-user-select:none";
+    chip.addEventListener("mouseenter", function () { chip.style.opacity = "1"; });
+    chip.addEventListener("mouseleave", function () { chip.style.opacity = ".4"; });
+    chip.addEventListener("click", function () { toggleSettings(); });
+    document.body.appendChild(chip);
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", mountChip);
+  } else {
+    mountChip();
+  }
+  /* capture-phase: while the panel is open, keys belong to the panel */
+  window.addEventListener("keydown", function (e) {
+    if (!settingsOpen()) return;
+    if (e.key === "Escape") toggleSettings(false);
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  }, true);
+  window.addEventListener("keyup", function (e) {
+    if (settingsOpen()) e.stopImmediatePropagation();
+  }, true);
+
+  window.arcade = {
+    store: store,
+    reducedMotion: reducedMotion,
+    settings: { open: function () { toggleSettings(true); }, close: function () { toggleSettings(false); } },
+    /* clamp a rAF delta so a backgrounded tab doesn't produce a huge step */
+    clampDt: function (dt, max) { return Math.min(Math.max(dt, 0), max || 0.1); },
+    /* daily-challenge helpers: one date key and one seed, stable all day,
+       shared by every game so "today's run" means the same thing everywhere */
+    dailyKey: function () {
+      var d = new Date(), m = d.getMonth() + 1, da = d.getDate();
+      return d.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (da < 10 ? "0" : "") + da;
+    },
+    dailySeed: function () {
+      var d = new Date();
+      return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+    },
+    /* mulberry32: tiny deterministic PRNG for seeded runs */
+    seededRand: function (seed) {
+      var a = seed >>> 0;
+      return function () {
+        a = (a + 0x6D2B79F5) >>> 0;
+        var t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    },
+    touch: {
+      available: touchOn,
+      sendKey: sendKey,
+      button: touchButton,
+      key: keyButton,
+      dpad: dpad,
+      arrowDpad: arrowDpad,
+      stick: stick
+    },
+    /* Run recorder — shared by the ghost racer and replay trophies.
+
+       A game calls start()/sample()/finish() and gets both a local ghost and,
+       when the arcade server happens to be serving the page, a shared one.
+       Every server call is best-effort: these games are static files that must
+       keep working opened straight off the disk, so a failed fetch is silently
+       ignored rather than surfaced. */
+    run: (function () {
+      var RATE_MS = 100;            // 10 Hz is plenty to interpolate a ghost
+      var MAX_FRAMES = 4000;        // ~6.5 minutes; matches the server cap
+      var cur = null;
+
+      function localKey(game) { return 'arcade_ghost_' + game; }
+
+      function post(path, body) {
+        try {
+          return fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' },
+                               body: JSON.stringify(body) })
+            .then(function (r) { return r.json(); })
+            .catch(function () { return null; });
+        } catch (e) { return Promise.resolve(null); }
+      }
+
+      return {
+        start: function (game, seed) {
+          cur = { game: game, seed: seed === undefined ? null : seed, frames: [], last: -1e9 };
+        },
+        /* Call every frame; it throttles itself. Pass the few numbers needed to
+           redraw the ghost — position, lane, whatever the game interpolates. */
+        sample: function (t) {
+          if (!cur || cur.frames.length >= MAX_FRAMES) return;
+          if (t - cur.last < RATE_MS / 1000) return;
+          cur.last = t;
+          cur.frames.push(Array.prototype.slice.call(arguments, 1).map(function (v) {
+            return Math.round((Number(v) || 0) * 100) / 100;   // 2dp keeps ghosts small
+          }));
+        },
+        recording: function () { return !!cur; },
+        /* Keep the run if it beat the stored ghost, and offer it to the server. */
+        finish: function (score, name) {
+          if (!cur || !cur.frames.length) { cur = null; return Promise.resolve(null); }
+          var ghost = { game: cur.game, seed: cur.seed, frames: cur.frames,
+                        score: Number(score) || 0,
+                        name: name || localStorage.getItem('arcade_name_v1') || 'player' };
+          cur = null;
+          try {
+            var prevRaw = localStorage.getItem(localKey(ghost.game));
+            var prev = prevRaw ? JSON.parse(prevRaw) : null;
+            if (!prev || ghost.score > prev.score) {
+              localStorage.setItem(localKey(ghost.game), JSON.stringify(ghost));
+            }
+          } catch (e) { /* quota or bad JSON — the server copy still matters */ }
+          return post('/api/ghost', ghost);
+        },
+        discard: function () { cur = null; },
+        /* Best available ghost: the server's if reachable, else the local one. */
+        best: function (game) {
+          var local = null;
+          try {
+            var raw = localStorage.getItem(localKey(game));
+            if (raw) local = JSON.parse(raw);
+          } catch (e) {}
+          try {
+            return fetch('/api/ghosts?game=' + encodeURIComponent(game))
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                var remote = d && d.list && d.list[0];
+                if (remote && (!local || remote.score > local.score)) return remote;
+                return local;
+              })
+              .catch(function () { return local; });
+          } catch (e) { return Promise.resolve(local); }
+        },
+        /* Read a ghost at an arbitrary time, interpolating between samples. */
+        at: function (ghost, t) {
+          if (!ghost || !ghost.frames || !ghost.frames.length) return null;
+          var f = ghost.frames, i = Math.floor(t / (RATE_MS / 1000));
+          if (i >= f.length - 1) return f[f.length - 1];
+          if (i < 0) return f[0];
+          var a = f[i], b = f[i + 1], k = (t / (RATE_MS / 1000)) - i, out = [];
+          for (var j = 0; j < a.length; j++) out.push(a[j] + (b[j] - a[j]) * k);
+          return out;
+        }
+      };
+    })()
+  };
+})();
+</script>
+<!-- arcade-shared:end -->
+<script>
+"use strict";
+/* ============================== CONSTANTS ============================== */
+const W = 24, H = 16, T = 40;              // grid + tile px
+const DAY_LEN = 45;                        // seconds per day
+const SAVE_KEY = "tinyAcres_v1";
+const TILL_COST = 5;
+
+// best / poor: the season a crop thrives or struggles in. Thriving is
+// +40% growth and +25% price; struggling halves growth. This is what makes
+// the season wheel a planting decision rather than background colour.
+const CROPS = {
+  wheat:   { name:"Wheat",   cost:5,  sell:12, grow:22,  col:"#e8c868", best:"Spring", poor:"Winter" },
+  carrot:  { name:"Carrot",  cost:12, sell:30, grow:45,  col:"#f08a3c", best:"Autumn", poor:null },
+  pumpkin: { name:"Pumpkin", cost:25, sell:75, grow:80,  col:"#ff8c2e", best:"Autumn", poor:"Spring" },
+  potato:  { name:"Potato",  cost:8,  sell:20, grow:38,  col:"#c9a26b", best:null,     poor:null },
+  corn:    { name:"Corn",    cost:18, sell:48, grow:60,  col:"#f5d547", best:"Summer", poor:"Winter" },
+  berry:   { name:"Berry",   cost:30, sell:95, grow:34,  col:"#e8415c", best:"Spring", poor:"Winter" },
+};
+function cropAffinity(kind){
+  const c = CROPS[kind], sea = curSeason().name;
+  if (!c) return { grow:1, sell:1, state:"ok" };
+  if (c.best === sea) return { grow:1.4, sell:1.25, state:"thriving" };
+  if (c.poor === sea) return { grow:0.5, sell:1,    state:"struggling" };
+  return { grow:1, sell:1, state:"ok" };
+}
+const BUILDS = {
+  house:  { name:"House",        cost:100, desc:"+3 villagers (auto-harvest nearby)" },
+  well:   { name:"Well",         cost:60,  desc:"Crops within 2 tiles grow +50%" },
+  barn:   { name:"Barn",         cost:150, desc:"+15% sell price (each, max 5)" },
+  coop:   { name:"Chicken Coop", cost:120, desc:"2 hens lay eggs worth 8g" },
+  cowpen: { name:"Cow Pen",      cost:250, desc:"2 cows make milk worth 20g" },
+};
+const VILLAGERS_PER_HOUSE = 3;
+const WELL_RADIUS = 2;
+const HOUSE_RANGE = 7;
+
+// animal buildings: which creature they house and what it produces
+const ANIM = {
+  coop:   { kind:"chicken", count:2, radius:1.9, speed:26, interval:40, product:"egg",  worth:8  },
+  cowpen: { kind:"cow",     count:2, radius:1.9, speed:13, interval:70, product:"milk", worth:20 },
+};
+const ANIM_BY_KIND = { chicken: ANIM.coop, cow: ANIM.cowpen };
+const MAX_PICKUPS = 14;
+
+// seasons: 12 days each, looping Spring -> Summer -> Autumn -> Winter
+const SEASON_LEN = 12;
+const SEASONS = [
+  { name:"Spring", grow:1.25, sell:1,   hue:104, sat:48, lum:2,  col:"#8fce6a", blurb:"Crops grow 25% faster" },
+  { name:"Summer", grow:1,    sell:1,   hue:96,  sat:42, lum:0,  col:"#ffd95e", blurb:"Beware of droughts" },
+  { name:"Autumn", grow:1,    sell:1.2, hue:62,  sat:38, lum:-1, col:"#f0a05a", blurb:"Sell prices +20%" },
+  { name:"Winter", grow:0.5,  sell:1,   hue:140, sat:10, lum:16, col:"#bcd8f0", blurb:"Crops grow at half speed" },
+];
+function seasonIdx(day){ return Math.floor((day-1)/SEASON_LEN) % 4; }
+function curSeason(){ return SEASONS[seasonIdx(S.day)]; }
+
+/* ============================== STATE ============================== */
+let S;                 // savable state
+let villagers = [];    // rebuilt from houses
+let animals = [];      // rebuilt from coops / cow pens
+let floats = [];       // floating texts
+let wellGrid = null;   // boolean per tile: near a well
+let barnCount = 0;
+let coopCount = 0, penCount = 0;
+let seaNow = SEASONS[0]; // cached each frame for drawing
+let mouse = { x:-1, y:-1, gx:-1, gy:-1, down:false, over:false };
+let tool = "till";
+let lastT = performance.now();
+let autosaveT = 0;
+let gameTime = 0;      // for animation only
+
+function freshState(){
+  const tiles = [];
+  for (let i = 0; i < W*H; i++) tiles.push({ t:"grass", crop:null });
+  return {
+    gold: 150, day: 1, time: DAY_LEN*0.2, tiles,
+    stats: { harvested: 0, eggs: 0, milk: 0 },
+    milestones: {},
+    event: { id:"calm", label:"A calm day" },
+    pickups: [],   // eggs / milk waiting on the ground: {x,y,k,worth}
+  };
+}
+
+/* ============================== HELPERS ============================== */
+const idx = (x,y) => y*W + x;
+const inB = (x,y) => x>=0 && y>=0 && x<W && y<H;
+const tileAt = (x,y) => S.tiles[idx(x,y)];
+function rnd(x,y,s){
+  let n = (x*374761393 + y*668265263 + s*982451653) | 0;
+  n = Math.imul(n ^ (n>>>13), 1274126177);
+  return ((n ^ (n>>>16)) >>> 0) / 4294967295;
+}
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+
+function recomputeAux(){
+  wellGrid = new Array(W*H).fill(false);
+  barnCount = 0; coopCount = 0; penCount = 0;
+  for (let y=0; y<H; y++) for (let x=0; x<W; x++){
+    const t = tileAt(x,y);
+    if (t.t === "barn") barnCount++;
+    if (t.t === "coop") coopCount++;
+    if (t.t === "cowpen") penCount++;
+    if (t.t === "well"){
+      for (let dy=-WELL_RADIUS; dy<=WELL_RADIUS; dy++)
+        for (let dx=-WELL_RADIUS; dx<=WELL_RADIUS; dx++)
+          if (inB(x+dx, y+dy)) wellGrid[idx(x+dx,y+dy)] = true;
+    }
+  }
+}
+
+function sellMult(){
+  let m = 1 + 0.15 * Math.min(barnCount, 5);
+  if (S.event.id === "merchant") m *= 1.3;
+  m *= curSeason().sell;
+  return m;
+}
+function sellPrice(kind){ return Math.round(CROPS[kind].sell * sellMult() * cropAffinity(kind).sell); }
+
+function rebuildVillagers(){
+  villagers = [];
+  for (let y=0; y<H; y++) for (let x=0; x<W; x++){
+    if (tileAt(x,y).t !== "house") continue;
+    for (let k=0; k<VILLAGERS_PER_HOUSE; k++){
+      villagers.push({
+        hx:x, hy:y,
+        x:(x+0.5)*T + (rnd(x,y,k)-0.5)*14, y:(y+0.5)*T + (rnd(x,y,k+9)-0.5)*14,
+        state:"idle", tx:0, ty:0, wait: 1 + rnd(x,y,k+3)*4,
+        hue: 180 + Math.floor(rnd(x,y,k+7)*160), seed: rnd(x,y,k+5)*10,
+      });
+    }
+  }
+  // clear stale claims
+  for (const t of S.tiles) delete t.cl;
+  for (const p of S.pickups) delete p.cl;
+}
+
+function rebuildAnimals(){
+  animals = [];
+  for (let y=0; y<H; y++) for (let x=0; x<W; x++){
+    const cfg = ANIM[tileAt(x,y).t];
+    if (!cfg) continue;
+    for (let k=0; k<cfg.count; k++){
+      animals.push({
+        kind: cfg.kind, bx:x, by:y,
+        x: clamp((x+0.5)*T + (rnd(x,y,k+11)-0.5)*T*1.6, 8, W*T-8),
+        y: clamp((y+0.5)*T + (rnd(x,y,k+13)-0.5)*T*1.6, 10, H*T-8),
+        tx:0, ty:0, state:"idle", wait: 0.5 + rnd(x,y,k+17)*3,
+        face: rnd(x,y,k+19) > 0.5 ? 1 : -1,
+        seed: rnd(x,y,k+23)*10,
+        timer: cfg.interval * (0.5 + rnd(x,y,k+29)*0.8),
+      });
+    }
+  }
+}
+
+function spawnProduce(a, cfg){
+  if (S.pickups.length >= MAX_PICKUPS) return;
+  const cands = [];
+  for (let dy=-2; dy<=2; dy++) for (let dx=-2; dx<=2; dx++){
+    const x = a.bx+dx, y = a.by+dy;
+    if (!inB(x,y)) continue;
+    const t = tileAt(x,y);
+    if (t.t !== "grass" || t.crop) continue;
+    if (S.pickups.some(p => p.x === x && p.y === y)) continue;
+    cands.push({x,y});
+  }
+  if (!cands.length) return;
+  const c = cands[Math.floor(Math.random()*cands.length)];
+  S.pickups.push({ x:c.x, y:c.y, k:cfg.product, worth:cfg.worth });
+  floats.push({ x:(c.x+0.5)*T, y:c.y*T+10, txt:cfg.product, life:1.1, col:"#f5f1e6" });
+}
+
+function collectPickup(p, who){
+  const i = S.pickups.indexOf(p);
+  if (i < 0) return;
+  S.pickups.splice(i, 1);
+  S.gold += p.worth;
+  if (p.k === "egg") S.stats.eggs = (S.stats.eggs||0) + 1;
+  else S.stats.milk = (S.stats.milk||0) + 1;
+  floats.push({ x:(p.x+0.5)*T, y:p.y*T+6, txt:"+"+p.worth+"g", life:1.3, col:"#ffd95e" });
+  if (!who) checkMilestones();
+}
+
+/* ============================== UI: LOG / TOASTS / MILESTONES ============================== */
+function log(msg, cls){
+  const ul = document.getElementById("log");
+  const li = document.createElement("li");
+  if (cls) li.className = cls;
+  li.innerHTML = `<span class="d">D${S.day}</span> ${msg}`;
+  ul.prepend(li);
+  while (ul.children.length > 30) ul.removeChild(ul.lastChild);
+}
+function toast(title, sub){
+  const d = document.createElement("div");
+  d.className = "toast";
+  d.innerHTML = title + (sub ? `<span class="sub2">${sub}</span>` : "");
+  document.getElementById("toasts").appendChild(d);
+  setTimeout(() => d.remove(), 3800);
+}
+
+const MILESTONES = [
+  { id:"harvest1",  name:"First harvest",      test: () => S.stats.harvested >= 1 },
+  { id:"gold500",   name:"Reach 500 gold",     test: () => S.gold >= 500 },
+  { id:"pop10",     name:"10 villagers",       test: () => villagers.length >= 10 },
+  { id:"barn1",     name:"Build a barn",       test: () => barnCount >= 1 },
+  { id:"day10",     name:"Reach day 10",       test: () => S.day >= 10 },
+  { id:"harvest50", name:"Harvest 50 crops",   test: () => S.stats.harvested >= 50 },
+  { id:"gold2000",  name:"Reach 2,000 gold",   test: () => S.gold >= 2000 },
+  { id:"egg1",      name:"First egg",          test: () => (S.stats.eggs||0) >= 1 },
+  { id:"milk1",     name:"First milk",         test: () => (S.stats.milk||0) >= 1 },
+  { id:"ranch",     name:"Coop and cow pen",   test: () => coopCount >= 1 && penCount >= 1 },
+  { id:"eggs25",    name:"Collect 25 eggs",    test: () => (S.stats.eggs||0) >= 25 },
+  { id:"winter1",   name:"Survive a winter",   test: () => S.day >= SEASON_LEN*4 + 1 },
+];
+function checkMilestones(){
+  for (const m of MILESTONES){
+    if (!S.milestones[m.id] && m.test()){
+      S.milestones[m.id] = true;
+      toast("Milestone: " + m.name);
+      log(`Milestone reached — <b>${m.name}</b>!`, "good");
+    }
+  }
+  renderMilestones();
+}
+function renderMilestones(){
+  const ul = document.getElementById("miles");
+  ul.innerHTML = "";
+  for (const m of MILESTONES){
+    const li = document.createElement("li");
+    const done = !!S.milestones[m.id];
+    li.className = done ? "done" : "";
+    li.innerHTML = `<span class="chk">${done ? "[x]" : "[ ]"}</span>${m.name}`;
+    ul.appendChild(li);
+  }
+}
+
+/* ============================== TOOLBAR ============================== */
+const TOOLS = [
+  { id:"till",    name:"Till Soil",  cost:TILL_COST, key:"1" },
+  { id:"wheat",   name:"Wheat",      cost:CROPS.wheat.cost,   key:"2", sub:`${CROPS.wheat.grow}s, sells ${CROPS.wheat.sell}g` },
+  { id:"carrot",  name:"Carrot",     cost:CROPS.carrot.cost,  key:"3", sub:`${CROPS.carrot.grow}s, sells ${CROPS.carrot.sell}g` },
+  { id:"pumpkin", name:"Pumpkin",   cost:CROPS.pumpkin.cost, key:"4", sub:`${CROPS.pumpkin.grow}s, sells ${CROPS.pumpkin.sell}g` },
+  { id:"potato",  name:"Potato",    cost:CROPS.potato.cost,  key:"q", sub:`${CROPS.potato.grow}s, sells ${CROPS.potato.sell}g` },
+  { id:"corn",    name:"Corn",      cost:CROPS.corn.cost,    key:"w", sub:`${CROPS.corn.grow}s, loves Summer` },
+  { id:"berry",   name:"Berry",     cost:CROPS.berry.cost,   key:"e", sub:`${CROPS.berry.grow}s, loves Spring` },
+  { id:"harvest", name:"Harvest",    cost:0,   key:"5" },
+  { id:"house",   name:"House",      cost:BUILDS.house.cost, key:"6", sub:"+3 villagers" },
+  { id:"well",    name:"Well",       cost:BUILDS.well.cost,  key:"7", sub:"crops nearby +50%" },
+  { id:"barn",    name:"Barn",       cost:BUILDS.barn.cost,  key:"8", sub:"+15% sell price" },
+  { id:"coop",    name:"Coop",       cost:BUILDS.coop.cost,   key:"0", sub:"2 hens, eggs 8g" },
+  { id:"cowpen",  name:"Cow Pen",    cost:BUILDS.cowpen.cost, key:"c", sub:"2 cows, milk 20g" },
+  { id:"dozer",   name:"Bulldoze",   cost:0,   key:"9" },
+];
+function buildToolbar(){
+  const bar = document.getElementById("toolbar");
+  bar.innerHTML = "";
+  for (const t of TOOLS){
+    const b = document.createElement("button");
+    b.className = "tool" + (t.id === tool ? " sel" : "");
+    b.dataset.id = t.id;
+    b.innerHTML = `<span class="tn">${t.name}</span>` +
+      `<span class="tc">${t.cost ? "-"+t.cost+"g" : "free"}</span>` +
+      `<span class="tk">${t.sub ? t.sub : "[" + t.key + "]"}</span>`;
+    b.onclick = () => { tool = t.id; buildToolbar(); };
+    bar.appendChild(b);
+  }
+  // utility buttons
+  const mk = (txt, fn, cls) => {
+    const b = document.createElement("button");
+    b.className = "tool util" + (cls ? " " + cls : "");
+    b.innerHTML = txt;
+    b.onclick = fn;
+    bar.appendChild(b);
+  };
+  mk(`<span class="tn">Save</span><span class="tk">&nbsp;</span>`, () => { save(); log("Game saved.", "good"); });
+  mk(`<span class="tn">Reset</span><span class="tk">&nbsp;</span>`, resetGame, "danger");
+}
+document.addEventListener("keydown", e => {
+  const t = TOOLS.find(t => t.key === e.key);
+  if (t){ tool = t.id; buildToolbar(); }
+});
+
+/* ============================== TOOL LOGIC ============================== */
+function canUse(toolId, x, y){
+  const t = tileAt(x,y);
+  if (toolId === "till"){
+    if (t.t !== "grass") return { ok:false, msg:"Needs open grass" };
+    if (S.gold < TILL_COST) return { ok:false, msg:"Not enough gold" };
+    return { ok:true, cost:TILL_COST, msg:"Till soil" };
+  }
+  if (CROPS[toolId]){
+    if (t.t !== "soil") return { ok:false, msg:"Needs tilled soil" };
+    if (t.crop) return { ok:false, msg:"Already planted" };
+    if (S.gold < CROPS[toolId].cost) return { ok:false, msg:"Not enough gold" };
+    return { ok:true, cost:CROPS[toolId].cost, msg:"Plant " + CROPS[toolId].name + (wellGrid[idx(x,y)] ? " (near well +50%)" : "") };
+  }
+  if (toolId === "harvest"){
+    if (!t.crop) return { ok:false, msg:"Nothing planted here" };
+    if (t.crop.p < 1) return { ok:false, msg:"Not mature yet (" + Math.floor(t.crop.p*100) + "%)" };
+    return { ok:true, cost:0, msg:"Harvest +" + sellPrice(t.crop.k) + "g" };
+  }
+  if (BUILDS[toolId]){
+    if (t.t !== "grass") return { ok:false, msg:"Needs open grass" };
+    if (S.gold < BUILDS[toolId].cost) return { ok:false, msg:"Not enough gold" };
+    return { ok:true, cost:BUILDS[toolId].cost, msg:"Build " + BUILDS[toolId].name };
+  }
+  if (toolId === "dozer"){
+    if (t.t === "grass" && !t.crop) return { ok:false, msg:"Nothing to clear" };
+    return { ok:true, cost:0, msg:"Clear " + (t.crop ? "crop" : t.t) };
+  }
+  return { ok:false, msg:"" };
+}
+
+function applyTool(x, y){
+  const chk = canUse(tool, x, y);
+  if (!chk.ok) return false;
+  const t = tileAt(x,y);
+  if (tool === "till"){
+    S.gold -= TILL_COST; t.t = "soil";
+  } else if (CROPS[tool]){
+    S.gold -= CROPS[tool].cost;
+    t.crop = { k: tool, p: 0 };
+  } else if (tool === "harvest"){
+    doHarvest(x, y, null);
+  } else if (BUILDS[tool]){
+    S.gold -= BUILDS[tool].cost;
+    t.t = tool; t.crop = null;
+    recomputeAux();
+    if (tool === "house"){ rebuildVillagers(); log("A new house! +" + VILLAGERS_PER_HOUSE + " villagers.", "good"); }
+    if (tool === "well") log("A well was dug. Nearby crops grow faster.", "good");
+    if (tool === "barn") log("Barn built! Sell prices +15%.", "good");
+    if (tool === "coop"){ rebuildAnimals(); log("Chicken coop built! Two hens move in and will lay eggs.", "good"); }
+    if (tool === "cowpen"){ rebuildAnimals(); log("Cow pen built! Two cows arrive and will produce milk.", "good"); }
+  } else if (tool === "dozer"){
+    const was = t.t;
+    t.t = "grass"; t.crop = null; delete t.cl;
+    if (BUILDS[was]){
+      recomputeAux();
+      if (was === "house") rebuildVillagers();
+      if (was === "coop" || was === "cowpen") rebuildAnimals();
+      log("Bulldozed a " + BUILDS[was].name.toLowerCase() + ".");
+    }
+  }
+  terrainDirty = true;   // graphics: rebuild pre-rendered ground layer
+  checkMilestones();
+  return true;
+}
+
+function doHarvest(x, y, who){
+  const t = tileAt(x,y);
+  if (!t.crop || t.crop.p < 1) return;
+  const gain = sellPrice(t.crop.k);
+  S.gold += gain;
+  S.stats.harvested++;
+  t.crop = null; delete t.cl;
+  floats.push({ x:(x+0.5)*T, y:y*T+6, txt:"+"+gain+"g", life:1.3, col:"#ffd95e" });
+  if (!who) checkMilestones();
+}
+
+/* ============================== DAY CYCLE & EVENTS ============================== */
+function rollEvent(){
+  if (curSeason().name === "Summer" && Math.random() < 0.18){
+    S.event = { id:"drought", label:"Drought" };
+    log("<b>Drought!</b> Crops wither today unless near a well.", "bad");
+    document.getElementById("weatherV").textContent = S.event.label;
+    return;
+  }
+  const r = Math.random();
+  if (r < 0.20){ S.event = { id:"rain", label:"Rainy" }; log("<b>Rain!</b> Crops grow much faster today.", "good"); }
+  else if (r < 0.32){ S.event = { id:"merchant", label:"Merchant" }; log("<b>A merchant visits!</b> Crops sell +30% today.", "good"); }
+  else if (r < 0.40){
+    S.event = { id:"calm", label:"Sunny" };
+    S.gold += 25;
+    log("A kind traveler gifts you <b>25 gold</b>.", "good");
+    floats.push({ x:W*T/2, y:H*T/2, txt:"+25g", life:1.5, col:"#ffd95e" });
+  }
+  else if (r < 0.47){
+    S.event = { id:"calm", label:"Crows" };
+    const planted = [];
+    for (let i=0;i<W*H;i++) if (S.tiles[i].crop) planted.push(i);
+    if (planted.length){
+      const i = planted[Math.floor(Math.random()*planted.length)];
+      S.tiles[i].crop = null; delete S.tiles[i].cl;
+      log("<b>Crows!</b> They ate one of your crops.", "bad");
+    } else log("Crows circle overhead, but find nothing.");
+  }
+  else { S.event = { id:"calm", label:"Sunny" }; log("A calm, sunny day on the farm."); }
+  document.getElementById("weatherV").textContent = S.event.label;
+}
+
+function newDay(){
+  const prevSea = seasonIdx(S.day);
+  S.day++;
+  if (seasonIdx(S.day) !== prevSea){
+    const sea = curSeason();
+    toast("Season: " + sea.name, sea.blurb);
+    log(`The season turns — <b>${sea.name}</b> begins. ${sea.blurb}.`, "good");
+  }
+  const upkeep = villagers.length; // 1g per villager
+  if (upkeep > 0){
+    const paid = Math.min(upkeep, S.gold);
+    S.gold -= paid;
+    log(`Day ${S.day} dawns. Upkeep: −${paid}g (villagers).`, paid < upkeep ? "bad" : "");
+  } else {
+    log(`Day ${S.day} dawns.`);
+  }
+  rollEvent();
+  checkMilestones();
+}
+
+function dayFactor(){
+  // 0 at midnight (day boundaries), 1 at noon
+  return clamp(Math.sin(Math.PI * (S.time / DAY_LEN)), 0, 1);
+}
+
+/* ============================== SIMULATION ============================== */
+function growthSpeed(x, y, kind){
+  let s = 1;
+  if (kind) s *= cropAffinity(kind).grow;
+  if (wellGrid[idx(x,y)]) s += 0.5;
+  if (S.event.id === "rain") s *= 1.8;
+  s *= curSeason().grow;
+  if (S.event.id === "drought" && !wellGrid[idx(x,y)]) s *= 0.15;
+  return s;
+}
+
+function tick(dt){
+  S.time += dt;
+  if (S.time >= DAY_LEN){ S.time -= DAY_LEN; newDay(); }
+
+  // crops
+  for (let y=0; y<H; y++) for (let x=0; x<W; x++){
+    const t = tileAt(x,y);
+    if (t.crop && t.crop.p < 1){
+      t.crop.p = Math.min(1, t.crop.p + dt * growthSpeed(x,y,t.crop.k) / CROPS[t.crop.k].grow);
+    }
+  }
+
+  // villagers
+  for (const v of villagers){
+    if (v.state === "idle"){
+      v.wait -= dt;
+      if (v.wait <= 0){
+        v.wait = 2 + Math.random()*3;
+        // find nearest mature unclaimed crop (or egg/milk pickup) near home
+        let best = null, bd = 1e9, bp = null;
+        for (let dy=-HOUSE_RANGE; dy<=HOUSE_RANGE; dy++) for (let dx=-HOUSE_RANGE; dx<=HOUSE_RANGE; dx++){
+          const x = v.hx+dx, y = v.hy+dy;
+          if (!inB(x,y)) continue;
+          const t = tileAt(x,y);
+          if (t.crop && t.crop.p >= 1 && !t.cl){
+            const d = dx*dx + dy*dy;
+            if (d < bd){ bd = d; best = {x,y}; bp = null; }
+          }
+        }
+        for (const p of S.pickups){
+          if (p.cl) continue;
+          const dx = p.x - v.hx, dy = p.y - v.hy;
+          if (Math.abs(dx) > HOUSE_RANGE || Math.abs(dy) > HOUSE_RANGE) continue;
+          const d = dx*dx + dy*dy;
+          if (d < bd){ bd = d; best = {x:p.x, y:p.y}; bp = p; }
+        }
+        if (best){
+          if (bp){ bp.cl = true; v.pk = bp; }
+          else { tileAt(best.x,best.y).cl = true; v.pk = null; }
+          v.tx = best.x; v.ty = best.y; v.state = "walk";
+        }
+      }
+    } else if (v.state === "walk" || v.state === "home"){
+      const gx = v.state === "walk" ? (v.tx+0.5)*T : (v.hx+0.5)*T;
+      const gy = v.state === "walk" ? (v.ty+0.5)*T : (v.hy+0.5)*T;
+      const dx = gx - v.x, dy = gy - v.y;
+      const d = Math.hypot(dx,dy);
+      const sp = 58 * dt;
+      if (d <= sp){
+        v.x = gx; v.y = gy;
+        if (v.state === "walk"){
+          if (v.pk){
+            if (S.pickups.includes(v.pk)) collectPickup(v.pk, v);
+            v.pk = null;
+          } else {
+            const t = tileAt(v.tx, v.ty);
+            if (t.crop && t.crop.p >= 1) doHarvest(v.tx, v.ty, v);
+            else delete t.cl;
+          }
+          v.state = "home";
+        } else {
+          v.state = "idle"; v.wait = 1.5 + Math.random()*3;
+        }
+      } else {
+        v.x += dx/d*sp; v.y += dy/d*sp;
+      }
+    }
+  }
+
+  // animals: wander near their building, lay eggs / make milk
+  for (const a of animals){
+    const cfg = ANIM_BY_KIND[a.kind];
+    a.timer -= dt;
+    if (a.timer <= 0){
+      a.timer = cfg.interval * (0.85 + Math.random()*0.4);
+      spawnProduce(a, cfg);
+    }
+    if (a.state === "idle"){
+      a.wait -= dt;
+      if (a.wait <= 0){
+        const ang = Math.random()*Math.PI*2, r = Math.random()*cfg.radius*T;
+        a.tx = clamp((a.bx+0.5)*T + Math.cos(ang)*r, 8, W*T-8);
+        a.ty = clamp((a.by+0.5)*T + Math.sin(ang)*r, 10, H*T-8);
+        a.state = "walk";
+      }
+    } else {
+      const dx = a.tx - a.x, dy = a.ty - a.y;
+      const d = Math.hypot(dx,dy), sp = cfg.speed*dt;
+      if (d <= sp){ a.x = a.tx; a.y = a.ty; a.state = "idle"; a.wait = 1 + Math.random()*4; }
+      else { a.x += dx/d*sp; a.y += dy/d*sp; if (Math.abs(dx) > 0.5) a.face = dx > 0 ? 1 : -1; }
+    }
+  }
+
+  // floating texts
+  for (let i = floats.length-1; i >= 0; i--){
+    const f = floats[i];
+    f.y -= 22*dt; f.life -= dt;
+    if (f.life <= 0) floats.splice(i,1);
+  }
+
+  // autosave + milestones (throttled)
+  autosaveT += dt;
+  if (autosaveT >= 20){ autosaveT = 0; save(); checkMilestones(); }
+}
+
+/* ============================== DRAWING ============================== */
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+cv.style.width = cv.width + "px";
+cv.style.height = cv.height + "px";
+cv.width = Math.round(cv.width * DPR);
+cv.height = Math.round(cv.height * DPR);
+ctx.scale(DPR, DPR);
+
+/* ---------- lighting (computed once per frame) ---------- */
+let df = 1;            // 0 = midnight, 1 = noon
+let shadowSkew = 0;    // long shadows at dawn / dusk
+let shadowAlpha = 0.2;
+
+function computeLight(){
+  df = dayFactor();
+  const slope = Math.cos(Math.PI * (S.time / DAY_LEN)); // +1 dawn, -1 dusk
+  shadowSkew = -slope * (1 - df) * 1.5;
+  shadowAlpha = 0.10 + 0.16 * df;
+}
+
+// soft ground shadow that stretches and leans with the sun
+function groundShadow(cx, cy, rx, hgt){
+  ctx.fillStyle = `rgba(18,28,12,${shadowAlpha.toFixed(3)})`;
+  ctx.beginPath();
+  ctx.ellipse(cx + shadowSkew * hgt * 0.5, cy, rx * (1 + Math.abs(shadowSkew) * 0.6), rx * 0.34, 0, 0, 7);
+  ctx.fill();
+}
+
+// gusty breeze that rolls across the fields
+function windAt(x, y){
+  return Math.sin(gameTime*1.7 + x*0.55 + y*0.33) + Math.sin(gameTime*0.53 + x*0.21) * 0.6;
+}
+
+/* ---------- pre-rendered terrain (rebuilt only when tiles / season / weather change) ---------- */
+const terrainCv = document.createElement("canvas");
+terrainCv.width = W*T; terrainCv.height = H*T;
+const tcx = terrainCv.getContext("2d");
+let terrainDirty = true, terrainSea = -1, terrainEvt = "";
+let buildingList = [];                 // cached for rain splashes on roofs
+const wearMap = new Array(W*H).fill(0); // trodden paths near buildings
+
+function computeWear(){
+  wearMap.fill(0);
+  for (let y=0; y<H; y++) for (let x=0; x<W; x++){
+    if (!BUILDS[tileAt(x,y).t]) continue;
+    for (let dy=-2; dy<=2; dy++) for (let dx=-2; dx<=2; dx++){
+      const nx = x+dx, ny = y+dy;
+      if (!inB(nx,ny)) continue;
+      const d = Math.hypot(dx,dy);
+      wearMap[idx(nx,ny)] = Math.min(1, wearMap[idx(nx,ny)] + Math.max(0, 1 - d/2.6) * 0.8);
+    }
+  }
+}
+
+function paintGrassTile(x, y, sea){
+  const px = x*T, py = y*T;
+  const winter = sea.name === "Winter";
+  const dry = S.event.id === "drought";
+  const stripe = (y & 1) ? 2.2 : -1.6;   // mowed-stripe banding
+  const sat = Math.max(12, sea.sat - (dry ? 14 : 0));
+  const L = 33 + stripe + rnd(x,y,1)*5 + sea.lum;
+  tcx.fillStyle = `hsl(${sea.hue + rnd(x,y,2)*12 + (dry ? 8 : 0)}, ${sat}%, ${L}%)`;
+  tcx.fillRect(px, py, T, T);
+
+  // hand-tufted grass blades
+  tcx.lineWidth = 1;
+  for (let k=0; k<8; k++){
+    const bx = px + 2 + rnd(x,y,10+k)*(T-5);
+    const by2 = py + 4 + rnd(x,y,20+k)*(T-8);
+    tcx.strokeStyle = rnd(x,y,30+k) > 0.5
+      ? `hsla(${sea.hue+8}, ${sat}%, ${L+9}%, .5)`
+      : `hsla(${sea.hue-6}, ${sat}%, ${Math.max(8, L-10)}%, .45)`;
+    tcx.beginPath();
+    tcx.moveTo(bx, by2+3);
+    tcx.lineTo(bx + (rnd(x,y,35+k)-0.5)*2, by2-2);
+    tcx.stroke();
+  }
+
+  // worn dirt paths near buildings
+  const wear = wearMap[idx(x,y)];
+  if (wear > 0.08){
+    tcx.fillStyle = `rgba(122,86,52,${(wear*0.42).toFixed(2)})`;
+    for (let k=0; k<4; k++){
+      const ox = px + 3 + rnd(x,y,120+k)*(T-14);
+      const oy = py + 3 + rnd(x,y,130+k)*(T-12);
+      tcx.beginPath();
+      tcx.ellipse(ox+5, oy+4, 5 + rnd(x,y,140+k)*5, 3 + rnd(x,y,145+k)*2, rnd(x,y,148+k)*3, 0, 7);
+      tcx.fill();
+    }
+    tcx.fillStyle = `rgba(70,46,24,${(wear*0.3).toFixed(2)})`;
+    for (let k=0; k<3; k++)
+      tcx.fillRect(px + rnd(x,y,150+k)*(T-4), py + rnd(x,y,160+k)*(T-3), 2, 1.5);
+  }
+
+  if (winter){
+    // deep snow cover with sculpted drifts
+    tcx.fillStyle = "rgba(235,243,252,0.82)";
+    tcx.fillRect(px, py, T, T);
+    tcx.fillStyle = "rgba(255,255,255,0.9)";
+    for (let k=0; k<3; k++){
+      const sx = px + rnd(x,y,80+k)*(T-16);
+      const sy = py + rnd(x,y,90+k)*(T-10);
+      tcx.beginPath();
+      tcx.ellipse(sx+8, sy+5, 8 + rnd(x,y,95+k)*7, 4 + rnd(x,y,97+k)*2, 0, 0, 7);
+      tcx.fill();
+    }
+    // blue shading on the lee side of drifts
+    tcx.fillStyle = "rgba(150,175,210,0.30)";
+    for (let k=0; k<2; k++){
+      const sx = px + rnd(x,y,180+k)*(T-14);
+      const sy = py + 6 + rnd(x,y,190+k)*(T-12);
+      tcx.beginPath();
+      tcx.ellipse(sx+6, sy+4, 7, 2, 0.2, 0, 7);
+      tcx.fill();
+    }
+    // glinting snow crystal
+    if (rnd(x,y,200) > 0.55){
+      tcx.fillStyle = "rgba(255,255,255,0.95)";
+      tcx.fillRect(px + rnd(x,y,201)*(T-3), py + rnd(x,y,202)*(T-3), 1.6, 1.6);
+    }
+    // frosty tufts poking through
+    if (rnd(x,y,40) > 0.88){
+      const fx = px + 8 + rnd(x,y,41)*22, fy = py + 8 + rnd(x,y,42)*22;
+      tcx.strokeStyle = "rgba(140,170,150,0.8)"; tcx.lineWidth = 1;
+      tcx.beginPath();
+      tcx.moveTo(fx, fy+4); tcx.lineTo(fx-2, fy-2);
+      tcx.moveTo(fx, fy+4); tcx.lineTo(fx+2, fy-2);
+      tcx.stroke();
+    }
+    // footprints along the trodden paths
+    if (wear > 0.14){
+      tcx.fillStyle = "rgba(130,150,185,0.55)";
+      const ang = rnd(x,y,210)*Math.PI*2;
+      let fx = px + T/2 + (rnd(x,y,211)-0.5)*14;
+      let fy = py + T/2 + (rnd(x,y,212)-0.5)*14;
+      for (let k=0; k<4; k++){
+        const side = (k & 1) ? 1.1 : -1.1;
+        tcx.beginPath();
+        tcx.ellipse(fx + Math.cos(ang+1.57)*side, fy + Math.sin(ang+1.57)*side, 1.4, 2.4, ang, 0, 7);
+        tcx.fill();
+        fx += Math.cos(ang)*5.5; fy += Math.sin(ang)*5.5;
+      }
+    }
+    return;
+  }
+
+  // wildflowers with stems and bright hearts
+  if (rnd(x,y,40) > 0.8){
+    const fx = px + 7 + rnd(x,y,41)*24, fy = py + 9 + rnd(x,y,42)*22;
+    tcx.strokeStyle = "rgba(30,70,25,0.55)"; tcx.lineWidth = 1;
+    tcx.beginPath();
+    tcx.moveTo(fx, fy+5); tcx.lineTo(fx-2, fy-2);
+    tcx.moveTo(fx, fy+5); tcx.lineTo(fx+2, fy-1);
+    tcx.moveTo(fx, fy+5); tcx.lineTo(fx, fy-3);
+    tcx.stroke();
+    if (rnd(x,y,43) > 0.45){
+      const cols = sea.name === "Autumn" ? ["#d98a3c","#c25e3a","#e3c56b"]
+                 : sea.name === "Spring" ? ["#f4b8d2","#fdf6ff","#f2e38a","#e8a7c8"]
+                 : ["#f2e38a","#e86a5e","#fdf6e0","#b7a9e8"];
+      tcx.fillStyle = cols[Math.floor(rnd(x,y,44)*cols.length)];
+      tcx.fillRect(fx-2.6, fy-4, 2, 2); tcx.fillRect(fx+0.6, fy-4, 2, 2);
+      tcx.fillRect(fx-2.6, fy-7, 2, 2); tcx.fillRect(fx+0.6, fy-7, 2, 2);
+      tcx.fillStyle = "#ffe9a0";
+      tcx.fillRect(fx-1, fy-5.5, 2, 2);
+    }
+  }
+  if (sea.name === "Spring" && rnd(x,y,220) > 0.72){
+    // drifted blossom petals
+    tcx.fillStyle = "rgba(248,196,220,0.85)";
+    for (let k=0; k<3; k++)
+      tcx.fillRect(px + rnd(x,y,221+k)*(T-3), py + rnd(x,y,225+k)*(T-3), 2, 1.6);
+  }
+  if (sea.name === "Autumn"){
+    // fallen-leaf litter
+    const n = Math.floor(rnd(x,y,230)*4);
+    for (let k=0; k<n; k++){
+      const lx = px + 4 + rnd(x,y,231+k)*(T-8);
+      const ly = py + 4 + rnd(x,y,235+k)*(T-8);
+      tcx.save(); tcx.translate(lx, ly); tcx.rotate(rnd(x,y,239+k)*3.14);
+      tcx.fillStyle = ["#c9762f","#a8542c","#d8a040","#8f5a28"][Math.floor(rnd(x,y,243+k)*4)];
+      tcx.beginPath(); tcx.ellipse(0, 0, 3.2, 1.7, 0, 0, 7); tcx.fill();
+      tcx.strokeStyle = "rgba(60,30,10,0.4)"; tcx.lineWidth = 0.7;
+      tcx.beginPath(); tcx.moveTo(-3, 0); tcx.lineTo(3.6, 0); tcx.stroke();
+      tcx.restore();
+    }
+  }
+}
+
+function paintSoilTile(x, y, sea){
+  const px = x*T, py = y*T;
+  const moist = S.event.id === "rain" || wellGrid[idx(x,y)];
+  const dry = S.event.id === "drought" && !wellGrid[idx(x,y)];
+  const L = (moist ? 21 : dry ? 30 : 26) + rnd(x,y,4)*5;
+  tcx.fillStyle = `hsl(${dry ? 32 : 24}, ${(moist ? 42 : 34) + rnd(x,y,3)*8}%, ${L}%)`;
+  tcx.fillRect(px, py, T, T);
+  // furrows: shadowed groove plus a sun-lit ridge
+  for (let r=0; r<4; r++){
+    const yy = py + 6 + r*9 + rnd(x,y,50+r)*2;
+    tcx.strokeStyle = "rgba(20,10,4,0.38)"; tcx.lineWidth = 2.2;
+    tcx.beginPath(); tcx.moveTo(px+2, yy);
+    tcx.quadraticCurveTo(px+T/2, yy + (rnd(x,y,55+r)-0.5)*3, px+T-2, yy);
+    tcx.stroke();
+    tcx.strokeStyle = "rgba(255,210,150,0.10)"; tcx.lineWidth = 1;
+    tcx.beginPath(); tcx.moveTo(px+3, yy+2.4); tcx.lineTo(px+T-3, yy+2.4); tcx.stroke();
+  }
+  // clods and pebbles
+  for (let k=0; k<4; k++){
+    tcx.fillStyle = rnd(x,y,60+k) > 0.5 ? "rgba(0,0,0,0.18)" : "rgba(255,235,200,0.08)";
+    tcx.fillRect(px + rnd(x,y,62+k)*(T-5), py + rnd(x,y,66+k)*(T-4), 2.5, 2);
+  }
+  if (moist){
+    // damp sheen flecks
+    tcx.fillStyle = "rgba(160,200,255,0.12)";
+    for (let k=0; k<3; k++)
+      tcx.fillRect(px + rnd(x,y,70+k)*(T-6), py + rnd(x,y,74+k)*(T-5), 4, 2);
+  }
+  if (sea.name === "Winter"){
+    tcx.fillStyle = "rgba(230,240,252,0.25)";
+    tcx.fillRect(px, py, T, T);
+    tcx.fillStyle = "rgba(250,252,255,0.6)";
+    for (let k=0; k<3; k++)
+      tcx.fillRect(px + rnd(x,y,100+k)*(T-7), py + rnd(x,y,110+k)*(T-6), 5, 2);
+  }
+}
+
+function buildTerrain(){
+  const sea = SEASONS[seasonIdx(S.day)];
+  computeWear();
+  buildingList = [];
+  for (let y=0; y<H; y++) for (let x=0; x<W; x++){
+    const t = tileAt(x,y);
+    if (BUILDS[t.t]) buildingList.push({ x, y, t: t.t });
+    if (t.t === "soil") paintSoilTile(x, y, sea);
+    else paintGrassTile(x, y, sea);
+  }
+  // soft baked grid
+  tcx.strokeStyle = "rgba(0,0,0,0.06)"; tcx.lineWidth = 1;
+  tcx.beginPath();
+  for (let x=1; x<W; x++){ tcx.moveTo(x*T+0.5, 0); tcx.lineTo(x*T+0.5, H*T); }
+  for (let y=1; y<H; y++){ tcx.moveTo(0, y*T+0.5); tcx.lineTo(W*T, y*T+0.5); }
+  tcx.stroke();
+  terrainDirty = false;
+  terrainSea = seasonIdx(S.day);
+  terrainEvt = S.event.id;
+}
+
+function stageOf(p){ return p >= 1 ? 3 : p >= 0.66 ? 2 : p >= 0.33 ? 1 : 0; }
+
+function drawCrop(x, y, crop){
+  const cx = x*T + T/2, by = y*T + T - 7;
+  const st = stageOf(crop.p);
+  const sway = windAt(x, y) * (st + 1) * 0.55;
+  ctx.save();
+  if (st === 0){ // sprout
+    ctx.strokeStyle = "#7ec850"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx, by); ctx.lineTo(cx + sway*0.5, by-7); ctx.stroke();
+    ctx.fillStyle = "#8fda5c";
+    ctx.beginPath(); ctx.ellipse(cx-3+sway*0.5, by-8, 3.5, 2, -0.5, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx+3+sway*0.5, by-8, 3.5, 2, 0.5, 0, 7); ctx.fill();
+  } else if (crop.k === "wheat"){
+    groundShadow(cx, by+3, 9, st*4);
+    const col = st === 3 ? "#d9b14f" : st === 2 ? "#b8c85a" : "#8fce6a";
+    const hgt = st === 1 ? 12 : st === 2 ? 19 : 25;
+    for (let s=0; s<4; s++){
+      const bx = cx - 9 + s*6;
+      const ph = sway + Math.sin(gameTime*2.1 + s*1.3 + x) * 0.8;
+      ctx.strokeStyle = col; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(bx, by);
+      ctx.quadraticCurveTo(bx + ph*0.7, by - hgt*0.6, bx + ph*1.5, by - hgt);
+      ctx.stroke();
+      if (st === 3){
+        const hx = bx + ph*1.5, hy = by - hgt;
+        ctx.strokeStyle = "rgba(244,216,124,0.8)"; ctx.lineWidth = 1;
+        for (let aw=0; aw<3; aw++){ // whiskery awns
+          ctx.beginPath(); ctx.moveTo(hx, hy - aw*2);
+          ctx.lineTo(hx + 3, hy - aw*2 - 4); ctx.stroke();
+        }
+        ctx.fillStyle = "#f4d87c";
+        ctx.beginPath(); ctx.ellipse(hx, hy - 2, 2.6, 6, ph*0.04, 0, 7); ctx.fill();
+        ctx.strokeStyle = "rgba(170,130,50,0.55)";
+        ctx.beginPath();
+        ctx.moveTo(hx-1.5, hy-6); ctx.lineTo(hx+1.5, hy+1);
+        ctx.moveTo(hx+1.5, hy-6); ctx.lineTo(hx-1.5, hy+1);
+        ctx.stroke();
+      } else if (st === 2){
+        ctx.fillStyle = "#cdd978";
+        ctx.beginPath(); ctx.ellipse(bx + ph*1.5, by - hgt - 1, 2, 4, 0, 0, 7); ctx.fill();
+      }
+    }
+  } else if (crop.k === "carrot"){
+    groundShadow(cx, by+3, 7, st*3);
+    const hgt = st === 1 ? 10 : st === 2 ? 15 : 18;
+    // feathery leafy tops
+    for (let s=-2; s<=2; s++){
+      ctx.strokeStyle = st >= 2 ? "#2f8a3c" : "#6cc24a"; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(cx, by);
+      ctx.quadraticCurveTo(cx + s*3 + sway*0.6, by - hgt*0.55, cx + s*4.5 + sway, by - hgt + Math.abs(s)*2);
+      ctx.stroke();
+      if (st >= 2){ // frilly side fronds
+        ctx.lineWidth = 1;
+        const mx = cx + s*3.6 + sway*0.8, my = by - hgt*0.62 + Math.abs(s);
+        ctx.beginPath();
+        ctx.moveTo(mx, my); ctx.lineTo(mx - 2.5, my - 1.5);
+        ctx.moveTo(mx, my); ctx.lineTo(mx + 2.5, my - 1.8);
+        ctx.stroke();
+      }
+    }
+    if (st >= 2){ // orange shoulder pushing out of the soil
+      const r = st === 3 ? 6 : 3.5;
+      ctx.fillStyle = "#f08a3c";
+      ctx.beginPath();
+      ctx.moveTo(cx - r, by - 1);
+      ctx.quadraticCurveTo(cx, by - 1 - r*0.5, cx + r, by - 1);
+      ctx.lineTo(cx + r*0.6, by + r);
+      ctx.quadraticCurveTo(cx, by + r + 2, cx - r*0.6, by + r);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = "rgba(150,60,10,0.5)"; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx - r*0.6, by + 1.5); ctx.lineTo(cx + r*0.6, by + 1.5);
+      ctx.moveTo(cx - r*0.4, by + 4); ctx.lineTo(cx + r*0.4, by + 4);
+      ctx.stroke();
+    }
+  } else if (crop.k === "pumpkin"){
+    // sprawling vine with leaves
+    ctx.strokeStyle = "#4e8f3a"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx-13, by+2);
+    ctx.quadraticCurveTo(cx-4, by-7+sway, cx+6, by-2);
+    ctx.quadraticCurveTo(cx+12, by+1, cx+14, by-4);
+    ctx.stroke();
+    ctx.fillStyle = "#5fa344";
+    ctx.beginPath(); ctx.ellipse(cx-8, by-4+sway*0.4, 4, 2.6, -0.5, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx+10, by-5, 3.4, 2.2, 0.5, 0, 7); ctx.fill();
+    if (st >= 2){
+      const r = st === 2 ? 7 : 13; // ripe pumpkins get huge
+      groundShadow(cx, by + 3, r*0.9, 4);
+      ctx.fillStyle = st === 2 ? "#6fae4a" : "#f07818";
+      ctx.beginPath(); ctx.ellipse(cx, by - r*0.45, r, r*0.78, 0, 0, 7); ctx.fill();
+      // deep ribs
+      ctx.strokeStyle = "rgba(90,30,0,0.30)"; ctx.lineWidth = 1.4;
+      for (const k of [-0.62, -0.26, 0.26, 0.62]){
+        ctx.beginPath();
+        ctx.moveTo(cx + k*r*0.5, by - r*1.2);
+        ctx.quadraticCurveTo(cx + k*r*1.5, by - r*0.45, cx + k*r*0.5, by + r*0.3);
+        ctx.stroke();
+      }
+      // glossy highlight
+      ctx.fillStyle = "rgba(255,235,180,0.30)";
+      ctx.beginPath(); ctx.ellipse(cx - r*0.4, by - r*0.8, r*0.3, r*0.18, -0.5, 0, 7); ctx.fill();
+      // stem and curly tendril
+      ctx.strokeStyle = "#4e6b2a"; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(cx, by - r*1.2); ctx.lineTo(cx+2, by - r*1.2 - 5); ctx.stroke();
+      ctx.strokeStyle = "#6fae4a"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(cx + 6, by - r*1.2 - 4 + sway*0.3, 2.5, 3.5, 8.5); ctx.stroke();
+    } else {
+      ctx.fillStyle = "#8fda5c";
+      ctx.beginPath(); ctx.ellipse(cx+10, by-4, 4, 3, 0.4, 0, 7); ctx.fill();
+    }
+  } else {
+    // generic crop: leafy base with fruit that fills in as it ripens
+    const def = CROPS[crop.k] || { col:"#8fda5c" };
+    const hgt = st === 1 ? 11 : st === 2 ? 17 : 22;
+    groundShadow(cx, by+3, 8, st*3);
+    ctx.strokeStyle = "#5f9b3c"; ctx.lineWidth = 2;
+    for (let b = -1; b <= 1; b++){
+      ctx.beginPath();
+      ctx.moveTo(cx + b*3, by);
+      ctx.quadraticCurveTo(cx + b*5 + sway*0.5, by - hgt*0.6, cx + b*7 + sway, by - hgt);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#79c24d";
+    for (let l = -1; l <= 1; l += 2){
+      ctx.beginPath();
+      ctx.ellipse(cx + l*6 + sway*0.6, by - hgt*0.75, 5, 3, l*0.6, 0, 7);
+      ctx.fill();
+    }
+    if (st >= 2){
+      const r = st === 3 ? 5 : 3.2;
+      ctx.fillStyle = def.col;
+      for (let f = -1; f <= 1; f++){
+        if (f === 0 && st < 3) continue;
+        ctx.beginPath();
+        ctx.arc(cx + f*5 + sway*0.4, by - hgt*0.55 + Math.abs(f)*3, r, 0, 7);
+        ctx.fill();
+      }
+      ctx.fillStyle = "rgba(255,255,255,0.28)";
+      ctx.beginPath(); ctx.arc(cx - 1 + sway*0.4, by - hgt*0.62, r*0.35, 0, 7); ctx.fill();
+    }
+  }
+  // mature sparkle
+  if (st === 3){
+    const tw = (Math.sin(gameTime*5 + x*2 + y) + 1) / 2;
+    ctx.fillStyle = `rgba(255,255,190,${0.35 + tw*0.5})`;
+    const sx = x*T + 6, sy = y*T + 7;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy-4); ctx.lineTo(sx+1.4, sy-1.4); ctx.lineTo(sx+4, sy);
+    ctx.lineTo(sx+1.4, sy+1.4); ctx.lineTo(sx, sy+4); ctx.lineTo(sx-1.4, sy+1.4);
+    ctx.lineTo(sx-4, sy); ctx.lineTo(sx-1.4, sy-1.4); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawHouse(x, y){
+  const px = x*T, py = y*T;
+  groundShadow(px + T/2, py + T - 4, 15, 20);
+  // stone footing
+  ctx.fillStyle = "#9a8d7a"; ctx.fillRect(px+6, py+T-8, T-12, 4);
+  // plaster walls with timber framing
+  ctx.fillStyle = "#ecdcb6"; ctx.fillRect(px+7, py+15, T-14, T-22);
+  ctx.strokeStyle = "#7a5a36"; ctx.lineWidth = 1.5;
+  ctx.strokeRect(px+7.5, py+15.5, T-15, T-23);
+  ctx.beginPath();
+  ctx.moveTo(px+7, py+21); ctx.lineTo(px+13, py+15);
+  ctx.moveTo(px+T-7, py+21); ctx.lineTo(px+T-13, py+15);
+  ctx.stroke();
+  // shingled roof
+  ctx.fillStyle = "#b5443a";
+  ctx.beginPath(); ctx.moveTo(px+2, py+17); ctx.lineTo(px+T/2, py+2); ctx.lineTo(px+T-2, py+17); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = "#7e2c26"; ctx.lineWidth = 1; ctx.stroke();
+  // scalloped shingle rows
+  ctx.strokeStyle = "rgba(90,25,20,0.55)"; ctx.lineWidth = 1;
+  for (let r=0; r<3; r++){
+    const ry = py + 8 + r*3.6;
+    const span = 3 + r*5;
+    for (let s=-span; s<span; s+=4){
+      ctx.beginPath();
+      ctx.arc(px+T/2 + s + 2, ry, 2, Math.PI*0.15, Math.PI*0.85);
+      ctx.stroke();
+    }
+  }
+  // stone chimney with drifting smoke puffs
+  ctx.fillStyle = "#8d8d95"; ctx.fillRect(px+T-13, py+4, 6, 9);
+  ctx.fillStyle = "#6e6e78"; ctx.fillRect(px+T-14, py+3, 8, 3);
+  for (let s=0; s<3; s++){
+    const pf = (gameTime*0.45 + x*0.7 + y*0.3 + s*0.33) % 1;
+    ctx.fillStyle = `rgba(235,235,235,${(0.34*(1-pf)).toFixed(2)})`;
+    ctx.beginPath();
+    ctx.arc(px+T-10 + Math.sin(pf*6 + s)*2.5, py+2 - pf*11, 1.5 + pf*3.5, 0, 7);
+    ctx.fill();
+  }
+  // arched plank door with brass knob
+  ctx.fillStyle = "#6b4a2b";
+  ctx.beginPath();
+  ctx.moveTo(px+T/2-4, py+T-8); ctx.lineTo(px+T/2-4, py+T-15);
+  ctx.arc(px+T/2, py+T-15, 4, Math.PI, 0);
+  ctx.lineTo(px+T/2+4, py+T-8); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = "rgba(40,24,10,0.6)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(px+T/2, py+T-18); ctx.lineTo(px+T/2, py+T-8); ctx.stroke();
+  ctx.fillStyle = "#c9a227"; ctx.fillRect(px+T/2+1.5, py+T-12, 1.8, 1.8);
+  // four-pane window: warm glow spilling out at night
+  const night = df < 0.4;
+  if (night){
+    const g = ctx.createRadialGradient(px+14.5, py+22, 1, px+14.5, py+22, 10);
+    g.addColorStop(0, `rgba(255,205,90,${(0.4*(1 - df/0.4)).toFixed(2)})`);
+    g.addColorStop(1, "rgba(255,205,90,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(px+4, py+12, 21, 20);
+  }
+  ctx.fillStyle = night ? "#ffd95e" : "#aacfdd";
+  ctx.fillRect(px+11, py+19, 7, 6);
+  ctx.strokeStyle = "#6b4a2b"; ctx.lineWidth = 1;
+  ctx.strokeRect(px+11.5, py+19.5, 6, 5);
+  ctx.beginPath();
+  ctx.moveTo(px+14.5, py+19); ctx.lineTo(px+14.5, py+25);
+  ctx.moveTo(px+11, py+22); ctx.lineTo(px+18, py+22);
+  ctx.stroke();
+  // flower box under the window (sleeps through winter)
+  if (seaNow.name !== "Winter"){
+    ctx.fillStyle = "#8a6340"; ctx.fillRect(px+10, py+25, 9, 2.5);
+    ctx.fillStyle = seaNow.name === "Autumn" ? "#d98a3c" : "#e86a8a";
+    ctx.fillRect(px+11, py+23.6, 2, 2);
+    ctx.fillRect(px+14, py+23.6, 2, 2);
+    ctx.fillRect(px+16.5, py+23.6, 1.8, 2);
+  }
+}
+
+function drawWell(x, y){
+  const px = x*T, py = y*T;
+  groundShadow(px + T/2, py + T - 5, 13, 16);
+  // stone ring with mortared blocks
+  ctx.fillStyle = "#8d8d95";
+  ctx.beginPath(); ctx.ellipse(px+T/2, py+T-14, 13, 9, 0, 0, 7); ctx.fill();
+  ctx.strokeStyle = "#5c5c64"; ctx.lineWidth = 2; ctx.stroke();
+  ctx.strokeStyle = "rgba(60,60,70,0.6)"; ctx.lineWidth = 1;
+  for (const sa of [0.4, 1.4, 2.4, 4.0, 5.0]){
+    ctx.beginPath();
+    ctx.moveTo(px+T/2 + Math.cos(sa)*9, py+T-14 + Math.sin(sa)*6);
+    ctx.lineTo(px+T/2 + Math.cos(sa)*13, py+T-14 + Math.sin(sa)*9);
+    ctx.stroke();
+  }
+  // animated water with ripples and a sparkle
+  const wob = Math.sin(gameTime*2.4 + x) * 0.8;
+  ctx.fillStyle = "#3f7fc2";
+  ctx.beginPath(); ctx.ellipse(px+T/2, py+T-15, 9, 5.5 + wob*0.4, 0, 0, 7); ctx.fill();
+  ctx.strokeStyle = "rgba(190,230,255,0.75)"; ctx.lineWidth = 1;
+  for (let r=0; r<2; r++){
+    const ph = (gameTime*0.8 + r*0.5 + x*0.3) % 1;
+    ctx.globalAlpha = 1 - ph;
+    ctx.beginPath(); ctx.ellipse(px+T/2, py+T-15, 2 + ph*7, (2 + ph*7)*0.55, 0, 0, 7); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  const tw = (Math.sin(gameTime*6 + x*2) + 1) / 2;
+  ctx.fillStyle = `rgba(230,250,255,${(0.4 + tw*0.5).toFixed(2)})`;
+  ctx.fillRect(px+T/2 - 4 + tw*5, py+T-17, 1.6, 1.6);
+  // posts + little shingled roof
+  ctx.strokeStyle = "#6b4a2b"; ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(px+9, py+T-16); ctx.lineTo(px+9, py+10);
+  ctx.moveTo(px+T-9, py+T-16); ctx.lineTo(px+T-9, py+10);
+  ctx.stroke();
+  ctx.fillStyle = "#4e78a8";
+  ctx.beginPath(); ctx.moveTo(px+4, py+11); ctx.lineTo(px+T/2, py+3); ctx.lineTo(px+T-4, py+11); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = "#35546f"; ctx.lineWidth = 1; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(px+8, py+8.5); ctx.lineTo(px+T-8, py+8.5); ctx.stroke();
+  // crank axle with a wiggling handle
+  ctx.strokeStyle = "#4a3118"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(px+9, py+12); ctx.lineTo(px+T-9, py+12); ctx.stroke();
+  ctx.strokeStyle = "#6b4a2b"; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(px+T-9, py+12);
+  ctx.lineTo(px+T-5.5, py+12 + Math.sin(gameTime*1.2 + x)*2);
+  ctx.stroke();
+  // rope and bucket, bobbing with the water
+  ctx.strokeStyle = "#caa36b"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(px+T/2, py+12); ctx.lineTo(px+T/2, py+T-21 + wob); ctx.stroke();
+  ctx.fillStyle = "#8a6b42"; ctx.fillRect(px+T/2-2.5, py+T-21+wob, 5, 4);
+  ctx.strokeStyle = "#5c3a1e";
+  ctx.beginPath(); ctx.arc(px+T/2, py+T-20.5+wob, 2.5, Math.PI, 0); ctx.stroke();
+}
+
+function drawBarn(x, y){
+  const px = x*T, py = y*T;
+  groundShadow(px + T/2, py + T - 4, 16, 22);
+  ctx.fillStyle = "#a63b32"; ctx.fillRect(px+5, py+14, T-10, T-19);
+  // weathered vertical planks
+  ctx.strokeStyle = "rgba(60,15,10,0.25)"; ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let s=px+9; s<px+T-6; s+=5){ ctx.moveTo(s, py+15); ctx.lineTo(s, py+T-6); }
+  ctx.stroke();
+  // gambrel roof with a sun-kissed ridge
+  ctx.fillStyle = "#7e2c26";
+  ctx.beginPath();
+  ctx.moveTo(px+2, py+16); ctx.lineTo(px+8, py+7); ctx.lineTo(px+T/2, py+3);
+  ctx.lineTo(px+T-8, py+7); ctx.lineTo(px+T-2, py+16); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = "rgba(255,230,200,0.25)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(px+4, py+15); ctx.lineTo(px+T-4, py+15); ctx.stroke();
+  // white trim
+  ctx.strokeStyle = "#f0e6d2"; ctx.lineWidth = 2;
+  ctx.strokeRect(px+6, py+15, T-12, T-21);
+  // double doors, slightly ajar on a dark interior
+  const dx0 = px+T/2-7, dy0 = py+T-19;
+  ctx.fillStyle = "#8c2f27"; ctx.fillRect(dx0, dy0, 14, 13);
+  ctx.fillStyle = "#2e130f"; ctx.fillRect(dx0+6, dy0+1, 2.5, 12);
+  ctx.strokeStyle = "#f0e6d2"; ctx.lineWidth = 1.6;
+  ctx.strokeRect(dx0, dy0, 14, 13);
+  ctx.beginPath();
+  ctx.moveTo(dx0, dy0); ctx.lineTo(dx0+6, dy0+13); ctx.moveTo(dx0+6, dy0); ctx.lineTo(dx0, dy0+13);
+  ctx.moveTo(dx0+8, dy0); ctx.lineTo(dx0+14, dy0+13); ctx.moveTo(dx0+14, dy0); ctx.lineTo(dx0+8, dy0+13);
+  ctx.stroke();
+  // hayloft window with hay spilling out
+  ctx.fillStyle = "#f0e6d2";
+  ctx.beginPath(); ctx.arc(px+T/2, py+10, 3.4, 0, 7); ctx.fill();
+  ctx.fillStyle = "#43200f";
+  ctx.beginPath(); ctx.arc(px+T/2, py+10, 2, 0, 7); ctx.fill();
+  ctx.fillStyle = "#e3c56b";
+  ctx.beginPath(); ctx.ellipse(px+T/2, py+12.5, 3, 1.3, 0, 0, 7); ctx.fill();
+  // stacked hay bales by the door
+  ctx.fillStyle = "#e3c56b";
+  ctx.fillRect(px+T-13, py+T-13, 8, 6);
+  ctx.fillRect(px+T-12, py+T-18, 6, 5);
+  ctx.strokeStyle = "rgba(140,100,40,0.7)"; ctx.lineWidth = 1;
+  ctx.strokeRect(px+T-13, py+T-13, 8, 6);
+  ctx.beginPath();
+  ctx.moveTo(px+T-9, py+T-18); ctx.lineTo(px+T-9, py+T-7);
+  ctx.stroke();
+}
+
+function drawCoop(x, y){
+  const px = x*T, py = y*T;
+  groundShadow(px + T/2, py + T - 4, 13, 16);
+  // scattered straw bedding
+  ctx.strokeStyle = "rgba(220,185,100,0.8)"; ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let k=0; k<5; k++){
+    const sx = px + 5 + rnd(x,y,400+k)*(T-10);
+    const sy = py + T - 7 + rnd(x,y,405+k)*4;
+    ctx.moveTo(sx, sy); ctx.lineTo(sx + 3, sy - 1);
+  }
+  ctx.stroke();
+  // hut body on short stilts
+  ctx.fillStyle = "#5c3a1e";
+  ctx.fillRect(px+10, py+T-10, 3, 5); ctx.fillRect(px+T-13, py+T-10, 3, 5);
+  ctx.fillStyle = "#c08a4e"; ctx.fillRect(px+8, py+12, T-16, T-22);
+  ctx.strokeStyle = "#7a5328"; ctx.lineWidth = 1; ctx.strokeRect(px+8.5, py+12.5, T-17, T-23);
+  // plank lines
+  ctx.strokeStyle = "rgba(90,60,30,0.35)";
+  ctx.beginPath();
+  ctx.moveTo(px+8, py+20); ctx.lineTo(px+T-8, py+20);
+  ctx.moveTo(px+8, py+26); ctx.lineTo(px+T-8, py+26);
+  ctx.stroke();
+  // roof with eave shadow
+  ctx.fillStyle = "#8a5a2e";
+  ctx.beginPath(); ctx.moveTo(px+4, py+14); ctx.lineTo(px+T/2, py+4); ctx.lineTo(px+T-4, py+14); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = "#5c3a1e"; ctx.stroke();
+  ctx.strokeStyle = "rgba(60,38,18,0.5)";
+  ctx.beginPath(); ctx.moveTo(px+8, py+11); ctx.lineTo(px+T-8, py+11); ctx.stroke();
+  // round pop-door with trim
+  ctx.fillStyle = "#3c2a16";
+  ctx.beginPath(); ctx.arc(px+T/2, py+T-16, 5, 0, 7); ctx.fill();
+  ctx.strokeStyle = "#7a5328"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(px+T/2, py+T-16, 5.5, 0, 7); ctx.stroke();
+  // ramp with cleats
+  ctx.fillStyle = "#a9773f";
+  ctx.beginPath();
+  ctx.moveTo(px+T/2-4, py+T-12); ctx.lineTo(px+T/2+4, py+T-12);
+  ctx.lineTo(px+T/2+8, py+T-3); ctx.lineTo(px+T/2-8, py+T-3);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = "rgba(90,60,30,0.6)"; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(px+T/2-5, py+T-9.5); ctx.lineTo(px+T/2+5, py+T-9.5);
+  ctx.moveTo(px+T/2-6.5, py+T-6); ctx.lineTo(px+T/2+6.5, py+T-6);
+  ctx.stroke();
+  // tiny window, lamplit at night
+  ctx.fillStyle = df < 0.4 ? "#ffd95e" : "#f2e38a";
+  ctx.fillRect(px+11, py+16, 5, 4);
+  ctx.strokeStyle = "#5c3a1e"; ctx.strokeRect(px+11.5, py+16.5, 4, 3);
+}
+
+function drawCowpen(x, y){
+  const px = x*T, py = y*T;
+  groundShadow(px + T/2, py + T - 4, 14, 8);
+  // trampled dirt with hoof prints
+  ctx.fillStyle = "rgba(120,85,50,0.5)"; ctx.fillRect(px+5, py+9, T-10, T-15);
+  ctx.fillStyle = "rgba(70,45,22,0.4)";
+  for (let k=0; k<5; k++)
+    ctx.fillRect(px + 7 + rnd(x,y,500+k)*(T-16), py + 11 + rnd(x,y,505+k)*(T-20), 2, 1.4);
+  // split-rail fence with a highlight
+  ctx.strokeStyle = "#8a6b42"; ctx.lineWidth = 2;
+  ctx.strokeRect(px+5, py+9, T-10, T-15);
+  ctx.beginPath(); ctx.moveTo(px+5, py+16); ctx.lineTo(px+T-5, py+16); ctx.stroke();
+  ctx.strokeStyle = "rgba(255,235,190,0.18)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(px+5, py+10); ctx.lineTo(px+T-5, py+10); ctx.stroke();
+  // capped posts
+  ctx.fillStyle = "#6b4a2b";
+  for (const fxp of [5, T/2, T-5]){
+    ctx.fillRect(px+fxp-2, py+4, 4, 8);
+    ctx.fillRect(px+fxp-2, py+T-10, 4, 8);
+  }
+  ctx.fillStyle = "#54391f";
+  for (const fxp of [5, T/2, T-5]) ctx.fillRect(px+fxp-2.5, py+3, 5, 2);
+  // braced gate
+  ctx.strokeStyle = "#a9875a"; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(px+T/2-5, py+T-6); ctx.lineTo(px+T/2+5, py+T-6);
+  ctx.moveTo(px+T/2-5, py+T-10); ctx.lineTo(px+T/2+5, py+T-10);
+  ctx.moveTo(px+T/2-5, py+T-10); ctx.lineTo(px+T/2+5, py+T-6);
+  ctx.stroke();
+  // water trough with a drifting shimmer
+  ctx.fillStyle = "#9d7846"; ctx.fillRect(px+9, py+T-18, 12, 5);
+  ctx.fillStyle = "#3f7fc2"; ctx.fillRect(px+10, py+T-17, 10, 3);
+  ctx.fillStyle = `rgba(200,235,255,${(0.3 + (Math.sin(gameTime*3 + x) + 1)*0.2).toFixed(2)})`;
+  ctx.fillRect(px+11 + (Math.sin(gameTime*1.7 + y)+1)*2.5, py+T-16.5, 2, 1.2);
+  // hay pile
+  ctx.fillStyle = "#e3c56b";
+  ctx.beginPath(); ctx.arc(px+T-13, py+17, 5, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(px+T-16, py+19, 3.4, 0, 7); ctx.fill();
+  ctx.strokeStyle = "rgba(140,100,40,0.6)"; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(px+T-16, py+15); ctx.lineTo(px+T-10, py+18);
+  ctx.moveTo(px+T-17, py+18); ctx.lineTo(px+T-11, py+20);
+  ctx.stroke();
+}
+
+function drawChicken(a){
+  const walking = a.state === "walk";
+  const step = Math.floor(gameTime*7 + a.seed) % 2;   // 2-frame waddle
+  const bob = walking ? (step ? 1.1 : -0.4) : Math.sin(gameTime*3 + a.seed)*0.4;
+  const tilt = walking ? (step ? 0.08 : -0.08) : 0;
+  const fx = a.face || 1;
+  const peck = !walking && Math.sin(gameTime*3 + a.seed) > 0.8 ? 2.4 : 0;
+  groundShadow(a.x, a.y + 5, 4.5, 6);
+  ctx.save(); ctx.translate(a.x, a.y + bob*0.5); ctx.rotate(tilt*fx);
+  // legs step in turn
+  const l1 = walking && step ? 1.4 : 0, l2 = walking && !step ? 1.4 : 0;
+  ctx.strokeStyle = "#d8903a"; ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(-1.5, 2); ctx.lineTo(-1.5 - l1*fx, 4.6);
+  ctx.moveTo(1.5, 2); ctx.lineTo(1.5 + l2*fx, 4.6);
+  ctx.stroke();
+  // plump body, folded wing, perky tail
+  ctx.fillStyle = "#f7f3e8";
+  ctx.beginPath(); ctx.ellipse(0, 0, 4.6, 3.7, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = "#e2dccb";
+  ctx.beginPath(); ctx.ellipse(-0.6*fx, 0.4, 2.6, 1.8, fx*0.25, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-4.2*fx, -1.8, 2.3, 1.7, fx*0.7, 0, 7); ctx.fill();
+  // head, comb, wattle, beak, eye
+  ctx.fillStyle = "#f7f3e8";
+  ctx.beginPath(); ctx.arc(3.4*fx, -4 + peck, 2.5, 0, 7); ctx.fill();
+  ctx.fillStyle = "#d84b3a";
+  ctx.beginPath(); ctx.arc(3*fx, -6.6 + peck, 1.1, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(4.2*fx, -6.9 + peck, 0.9, 0, 7); ctx.fill();
+  ctx.fillRect(4.6*fx - 0.7, -3 + peck, 1.4, 1.8);
+  ctx.fillStyle = "#e8a33c";
+  ctx.beginPath();
+  ctx.moveTo(5.6*fx, -4.4 + peck); ctx.lineTo(7.4*fx, -3.5 + peck); ctx.lineTo(5.6*fx, -2.7 + peck);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#2b2b2b"; ctx.fillRect(3.6*fx, -5 + peck, 1.1, 1.1);
+  ctx.restore();
+  if (peck > 0){ // scratched-up speck where she pecks
+    ctx.fillStyle = "rgba(90,60,30,0.5)";
+    ctx.fillRect(a.x + 6*fx, a.y + 3.5, 1.5, 1);
+  }
+}
+
+function drawCow(a){
+  const walking = a.state === "walk";
+  const step = Math.floor(gameTime*5 + a.seed) % 2;   // 2-frame amble
+  const bob = walking ? (step ? 0.9 : -0.3) : Math.sin(gameTime*1.6 + a.seed)*0.4;
+  const fx = a.face || 1;
+  const graze = !walking && Math.sin(gameTime*0.6 + a.seed) > 0.5 ? 2.6 : 0;
+  const chew = !walking ? Math.abs(Math.sin(gameTime*4.5 + a.seed)) : 0;
+  groundShadow(a.x, a.y + 7, 8.5, 9);
+  ctx.save(); ctx.translate(a.x, a.y + bob*0.35);
+  // leg pairs alternate while walking; hooves
+  const lo = walking ? (step ? 1.1 : -1.1) : 0;
+  ctx.fillStyle = "#e8e4da";
+  ctx.fillRect(-6 + lo, 2, 2.4, 5.4); ctx.fillRect(3.6 - lo, 2, 2.4, 5.4);
+  ctx.fillStyle = "#b9b4a8";
+  ctx.fillRect(-6 + lo, 6.4, 2.4, 1.2); ctx.fillRect(3.6 - lo, 6.4, 2.4, 1.2);
+  // body + patches
+  ctx.fillStyle = "#f2eee4";
+  ctx.beginPath(); ctx.ellipse(0, 0, 8, 5.2, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = "#4a4038";
+  ctx.beginPath(); ctx.ellipse(-3 + (a.seed % 3), -1, 3.2, 2.4, 0.4, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(3, 2, 2.2, 1.6, -0.5, 0, 7); ctx.fill();
+  // swishing tail with a tuft
+  const swish = Math.sin(gameTime*2 + a.seed)*1.5;
+  ctx.strokeStyle = "#d9d4c8"; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(-7.5*fx, -2);
+  ctx.quadraticCurveTo(-10*fx, 1, -9*fx, 4 + swish);
+  ctx.stroke();
+  ctx.fillStyle = "#6b5a48";
+  ctx.beginPath(); ctx.arc(-9*fx, 4.6 + swish, 1.2, 0, 7); ctx.fill();
+  // head dips to graze; jaw works while chewing the cud
+  const hx = 8*fx, hy = -2 + graze;
+  ctx.fillStyle = "#f2eee4";
+  ctx.beginPath(); ctx.ellipse(hx, hy, 3.8, 3.1, 0, 0, 7); ctx.fill();
+  // flicking ear + little horn
+  ctx.fillStyle = "#d9d4c8";
+  ctx.beginPath();
+  ctx.ellipse(hx - 1.8*fx, hy - 2.8, 1.9, 1, fx*0.7 + Math.sin(gameTime*1.3 + a.seed)*0.15, 0, 7);
+  ctx.fill();
+  ctx.strokeStyle = "#cbb89a"; ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.moveTo(hx + 0.5*fx, hy - 3); ctx.lineTo(hx + 1.6*fx, hy - 4.6); ctx.stroke();
+  // chewing muzzle
+  ctx.fillStyle = "#e5b9b2";
+  ctx.beginPath();
+  ctx.ellipse(hx + 1.4*fx, hy + 1.3 + chew*0.7, 2.3, 1.6 + chew*0.3, 0, 0, 7);
+  ctx.fill();
+  ctx.fillStyle = "#9c6f66";
+  ctx.fillRect(hx + 1.1*fx, hy + 1 + chew*0.7, 1, 0.8);
+  // eye
+  ctx.fillStyle = "#2b2b2b"; ctx.fillRect(hx - 0.5, hy - 1.4, 1.2, 1.2);
+  ctx.restore();
+}
+
+function drawPickup(p){
+  const cx = (p.x+0.5)*T, cy = (p.y+0.5)*T;
+  groundShadow(cx, cy+7, 5, 5);
+  if (p.k === "egg"){
+    // straw nest
+    ctx.strokeStyle = "rgba(200,160,80,0.85)"; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.ellipse(cx, cy+5.5, 6.2, 2.4, 0, 0, 7); ctx.stroke();
+    ctx.strokeStyle = "rgba(160,120,55,0.6)";
+    ctx.beginPath(); ctx.ellipse(cx, cy+6.5, 5, 1.8, 0.2, 0, 7); ctx.stroke();
+    ctx.fillStyle = "#f7f2e0";
+    ctx.beginPath(); ctx.ellipse(cx, cy+2, 4.2, 5.4, 0, 0, 7); ctx.fill();
+    ctx.strokeStyle = "rgba(140,120,80,0.45)"; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    ctx.beginPath(); ctx.ellipse(cx-1.4, cy, 1.2, 1.8, -0.4, 0, 7); ctx.fill();
+  } else { // milk churn
+    ctx.fillStyle = "#cfd6da"; ctx.fillRect(cx-4, cy-4, 8, 11);
+    ctx.fillStyle = "#aab3b8"; ctx.fillRect(cx-4, cy-4, 8, 3);
+    ctx.fillStyle = "#e9edf0"; ctx.fillRect(cx-2, cy-7, 4, 3);
+    ctx.strokeStyle = "#7e878c"; ctx.lineWidth = 1; ctx.strokeRect(cx-4.5, cy-4.5, 9, 12);
+  }
+  // twinkle so pickups catch the eye
+  const tw = (Math.sin(gameTime*5 + p.x*2 + p.y) + 1) / 2;
+  ctx.fillStyle = `rgba(255,255,190,${0.3 + tw*0.4})`;
+  ctx.fillRect(cx+6, cy-8, 2, 2);
+}
+
+function drawVillager(v, i){
+  const walking = v.state !== "idle";
+  const step = Math.floor(gameTime*9 + v.seed) % 2;   // 2-frame stride
+  const bob = walking ? (step ? 1.2 : -0.5) : Math.sin(gameTime*2 + v.seed)*0.5;
+  groundShadow(v.x, v.y + 5.5, 4.2, 9);
+  // striding legs
+  const lo = walking ? (step ? 1.6 : -1.6) : 0;
+  ctx.strokeStyle = "#4a3a30"; ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(v.x - 1.3, v.y + 1.5); ctx.lineTo(v.x - 1.3 + lo, v.y + 5.4);
+  ctx.moveTo(v.x + 1.3, v.y + 1.5); ctx.lineTo(v.x + 1.3 - lo, v.y + 5.4);
+  ctx.stroke();
+  // belted tunic
+  ctx.fillStyle = `hsl(${v.hue}, 48%, 52%)`;
+  ctx.beginPath(); ctx.ellipse(v.x, v.y + bob*0.25, 3.7, 4.6, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = `hsl(${v.hue}, 48%, 38%)`;
+  ctx.fillRect(v.x - 3, v.y + 1 + bob*0.25, 6, 1.4);
+  // head with straw hat or mop of hair
+  ctx.fillStyle = "#f3cfa6";
+  ctx.beginPath(); ctx.arc(v.x, v.y - 6 + bob, 3, 0, 7); ctx.fill();
+  if ((v.hue % 2) < 1){
+    ctx.fillStyle = "#e3c56b";
+    ctx.beginPath(); ctx.ellipse(v.x, v.y - 7.6 + bob, 4.4, 1.5, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(v.x, v.y - 8.6 + bob, 2.2, 1.6, 0, 0, 7); ctx.fill();
+  } else {
+    ctx.fillStyle = `hsl(${(v.hue*3) % 40 + 15}, 45%, 28%)`;
+    ctx.beginPath(); ctx.arc(v.x, v.y - 6.8 + bob, 2.6, Math.PI, 0); ctx.fill();
+  }
+  // bright little eyes
+  ctx.fillStyle = "#2b2b2b";
+  ctx.fillRect(v.x - 1.6, v.y - 6.4 + bob, 1, 1);
+  ctx.fillRect(v.x + 0.6, v.y - 6.4 + bob, 1, 1);
+  // woven basket of produce on the walk home
+  if (v.state === "home"){
+    const bx = v.x + 4.6, byy = v.y - 0.5 + bob*0.3;
+    ctx.fillStyle = "#b08444";
+    ctx.beginPath();
+    ctx.moveTo(bx-3, byy-1.5); ctx.lineTo(bx+3, byy-1.5);
+    ctx.lineTo(bx+2.2, byy+2.5); ctx.lineTo(bx-2.2, byy+2.5);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = "rgba(90,55,20,0.7)"; ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(bx-2.7, byy-0.2); ctx.lineTo(bx+2.7, byy-0.2);
+    ctx.moveTo(bx-2.4, byy+1.2); ctx.lineTo(bx+2.4, byy+1.2);
+    ctx.stroke();
+    ctx.strokeStyle = "#8a6340"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(bx, byy-1.5, 2.6, Math.PI, 0); ctx.stroke();
+    ctx.fillStyle = "#e8c868";
+    ctx.beginPath(); ctx.arc(bx-1, byy-2, 1.1, 0, 7); ctx.fill();
+    ctx.fillStyle = "#f08a3c";
+    ctx.beginPath(); ctx.arc(bx+1.2, byy-2.2, 1.1, 0, 7); ctx.fill();
+  }
+}
+
+function draw(){
+  seaNow = curSeason();
+  ctx.clearRect(0, 0, W*T, H*T);
+  // terrain (pre-rendered offscreen; its own grid is baked in) — rebuilt when
+  // tiles change or the season/event shifts
+  if (terrainDirty || terrainSea !== seasonIdx(S.day) || terrainEvt !== S.event.id) buildTerrain();
+  ctx.drawImage(terrainCv, 0, 0);
+  // well radius hint while placing / hovering well
+  if (mouse.over && inB(mouse.gx, mouse.gy)){
+    const ht = tileAt(mouse.gx, mouse.gy);
+    if (tool === "well" || ht.t === "well"){
+      ctx.fillStyle = "rgba(90,170,255,0.14)";
+      for (let dy=-WELL_RADIUS; dy<=WELL_RADIUS; dy++) for (let dx=-WELL_RADIUS; dx<=WELL_RADIUS; dx++){
+        const x = mouse.gx+dx, y = mouse.gy+dy;
+        if (inB(x,y)) ctx.fillRect(x*T, y*T, T, T);
+      }
+    }
+  }
+  // objects
+  for (let y=0; y<H; y++) for (let x=0; x<W; x++){
+    const t = tileAt(x,y);
+    if (t.crop) drawCrop(x, y, t.crop);
+    if (t.t === "house") drawHouse(x,y);
+    else if (t.t === "well") drawWell(x,y);
+    else if (t.t === "barn") drawBarn(x,y);
+    else if (t.t === "coop") drawCoop(x,y);
+    else if (t.t === "cowpen") drawCowpen(x,y);
+  }
+  // ground pickups (eggs / milk)
+  for (const p of S.pickups) drawPickup(p);
+  // animals
+  for (const a of animals){
+    if (a.kind === "chicken") drawChicken(a); else drawCow(a);
+  }
+  // villagers
+  villagers.forEach(drawVillager);
+  // floating texts
+  ctx.font = "bold 13px Trebuchet MS, sans-serif"; ctx.textAlign = "center";
+  for (const f of floats){
+    ctx.globalAlpha = clamp(f.life, 0, 1);
+    ctx.fillStyle = "#1b240f";
+    ctx.fillText(f.txt, f.x+1, f.y+1);
+    ctx.fillStyle = f.col;
+    ctx.fillText(f.txt, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+  // day/night tint
+  const df = dayFactor();
+  const nightA = 0.5 * Math.pow(1 - df, 1.6);
+  if (nightA > 0.01){
+    ctx.fillStyle = `rgba(16, 24, 70, ${nightA})`;
+    ctx.fillRect(0, 0, W*T, H*T);
+  }
+  if (df > 0.03 && df < 0.4){ // dawn / dusk warmth
+    ctx.fillStyle = `rgba(255, 140, 50, ${0.12 * (1 - Math.abs(df-0.2)/0.2)})`;
+    ctx.fillRect(0, 0, W*T, H*T);
+  }
+  // season tints
+  if (seaNow.name === "Winter"){
+    ctx.fillStyle = "rgba(170,200,255,0.10)";
+    ctx.fillRect(0, 0, W*T, H*T);
+    // gentle falling snow
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    for (let k=0; k<44; k++){
+      const sx = (((k*137 + Math.sin(gameTime*0.8 + k)*12 + gameTime*14) % (W*T)) + W*T) % (W*T);
+      const sy = (k*53 + gameTime*32) % (H*T);
+      ctx.fillRect(sx, sy, 2, 2);
+    }
+  } else if (seaNow.name === "Autumn"){
+    ctx.fillStyle = "rgba(255,150,60,0.06)";
+    ctx.fillRect(0, 0, W*T, H*T);
+  }
+  if (S.event.id === "drought"){ // dry heat haze
+    ctx.fillStyle = "rgba(255,190,80,0.10)";
+    ctx.fillRect(0, 0, W*T, H*T);
+  }
+  if (S.event.id === "rain"){ // rain streaks
+    ctx.strokeStyle = "rgba(170,200,255,0.35)"; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let k=0; k<60; k++){
+      const rx = ((k*137 + gameTime*260) % (W*T + 40)) - 20;
+      const ry = (k*71 + gameTime*430) % (H*T);
+      ctx.moveTo(rx, ry); ctx.lineTo(rx-3, ry+9);
+    }
+    ctx.stroke();
+    ctx.fillStyle = "rgba(40,60,110,0.10)";
+    ctx.fillRect(0, 0, W*T, H*T);
+  }
+  // hover highlight
+  if (mouse.over && inB(mouse.gx, mouse.gy)){
+    const chk = canUse(tool, mouse.gx, mouse.gy);
+    ctx.fillStyle = chk.ok ? "rgba(140,255,120,0.22)" : "rgba(255,90,70,0.22)";
+    ctx.fillRect(mouse.gx*T, mouse.gy*T, T, T);
+    ctx.strokeStyle = chk.ok ? "rgba(190,255,160,0.9)" : "rgba(255,130,110,0.9)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(mouse.gx*T+1, mouse.gy*T+1, T-2, T-2);
+  }
+}
+
+/* ============================== INPUT ============================== */
+function canvasPos(e){
+  const r = cv.getBoundingClientRect();
+  const x = (e.clientX - r.left) * (W*T / r.width);
+  const y = (e.clientY - r.top) * (H*T / r.height);
+  return { x, y, gx: Math.floor(x/T), gy: Math.floor(y/T) };
+}
+const tip = document.getElementById("tip");
+function updateTip(e){
+  if (!mouse.over || !inB(mouse.gx, mouse.gy)){ tip.style.display = "none"; return; }
+  const chk = canUse(tool, mouse.gx, mouse.gy);
+  const t = tileAt(mouse.gx, mouse.gy);
+  let extra = "";
+  const pk = S.pickups.find(q => q.x === mouse.gx && q.y === mouse.gy);
+  if (pk) extra += `<br><span class="ok">Click: collect ${pk.k} +${pk.worth}g</span>`;
+  if (t.crop){
+    const c = CROPS[t.crop.k];
+    extra += `<br>${c.name}: ` + (t.crop.p >= 1
+      ? `<span class="ok">mature! worth ${sellPrice(t.crop.k)}g</span>`
+      : `${Math.floor(t.crop.p*100)}% grown` + (wellGrid[idx(mouse.gx,mouse.gy)] ? " (well boost)" : ""));
+  }
+  tip.innerHTML = (chk.ok
+    ? `<span class="ok">${chk.msg}</span>` + (chk.cost ? ` <span class="cost">-${chk.cost}g</span>` : "")
+    : `<span class="bad">${chk.msg}</span>`) + extra;
+  tip.style.display = "block";
+  const wrap = document.getElementById("canvasWrap").getBoundingClientRect();
+  let tx = e.clientX - wrap.left + 14, ty = e.clientY - wrap.top + 14;
+  if (tx > wrap.width - 170) tx -= 180;
+  if (ty > wrap.height - 56) ty -= 60;
+  tip.style.left = tx + "px"; tip.style.top = ty + "px";
+}
+cv.addEventListener("mousemove", e => {
+  const p = canvasPos(e);
+  mouse.x = p.x; mouse.y = p.y; mouse.over = true;
+  const moved = p.gx !== mouse.gx || p.gy !== mouse.gy;
+  mouse.gx = p.gx; mouse.gy = p.gy;
+  updateTip(e);
+  // drag-paint for cheap tools
+  if (mouse.down && moved && inB(p.gx, p.gy) &&
+      (tool === "till" || tool === "harvest" || tool === "dozer" || CROPS[tool])){
+    applyTool(p.gx, p.gy);
+  }
+});
+cv.addEventListener("mouseleave", () => { mouse.over = false; mouse.down = false; tip.style.display = "none"; });
+cv.addEventListener("mousedown", e => {
+  if (e.button !== 0) return;
+  mouse.down = true;
+  const p = canvasPos(e);
+  if (inB(p.gx, p.gy)){
+    const pk = S.pickups.find(q => q.x === p.gx && q.y === p.gy);
+    if (pk) collectPickup(pk, null);
+    else applyTool(p.gx, p.gy);
+  }
+  updateTip(e);
+});
+window.addEventListener("mouseup", () => { mouse.down = false; });
+
+/* ============================== SAVE / LOAD / RESET ============================== */
+function save(){
+  try {
+    const tiles = S.tiles.map(t => ({ t: t.t, crop: t.crop ? { k: t.crop.k, p: t.crop.p } : null }));
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      gold: S.gold, day: S.day, time: S.time, tiles,
+      stats: S.stats, milestones: S.milestones, event: S.event,
+      pickups: S.pickups.map(p => ({ x:p.x, y:p.y, k:p.k })),
+    }));
+  } catch (e) { /* storage unavailable */ }
+}
+function load(){
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    const d = JSON.parse(raw);
+    if (!d || !Array.isArray(d.tiles) || d.tiles.length !== W*H) return false;
+    S = freshState();
+    S.gold = d.gold ?? 150; S.day = d.day ?? 1; S.time = d.time ?? 0;
+    S.stats = d.stats ?? { harvested:0 };
+    S.stats.harvested = S.stats.harvested || 0;
+    S.stats.eggs = S.stats.eggs || 0;
+    S.stats.milk = S.stats.milk || 0;
+    S.milestones = d.milestones ?? {};
+    S.event = d.event ?? { id:"calm", label:"Sunny" };
+    S.tiles = d.tiles.map(t => ({ t: t.t || "grass", crop: t.crop ? { k: t.crop.k, p: +t.crop.p || 0 } : null }));
+    S.pickups = Array.isArray(d.pickups)
+      ? d.pickups.filter(p => p && inB(p.x|0, p.y|0))
+          .map(p => ({ x:p.x|0, y:p.y|0, k:p.k === "milk" ? "milk" : "egg", worth:p.k === "milk" ? ANIM.cowpen.worth : ANIM.coop.worth }))
+      : [];
+    return true;
+  } catch (e) { return false; }
+}
+function resetGame(){
+  if (!confirm("Reset the farm? All progress will be lost.")) return;
+  localStorage.removeItem(SAVE_KEY);
+  S = freshState();
+  recomputeAux(); rebuildVillagers(); rebuildAnimals();
+  terrainDirty = true;
+  document.getElementById("log").innerHTML = "";
+  log("A fresh farm! Till soil, plant crops, build a village.");
+  document.getElementById("weatherV").textContent = S.event.label;
+  renderMilestones();
+}
+
+/* ============================== BOOT & LOOP ============================== */
+function refreshHUD(){
+  document.getElementById("goldV").textContent = Math.floor(S.gold);
+  document.getElementById("popV").textContent = villagers.length;
+  document.getElementById("dayV").textContent = S.day;
+  const sea = curSeason();
+  const seaEl = document.getElementById("seasonV");
+  seaEl.textContent = sea.name;
+  seaEl.style.color = sea.col;
+  document.getElementById("clockFill").style.width = (S.time / DAY_LEN * 100).toFixed(1) + "%";
+}
+
+function frame(now){
+  const dt = Math.min(0.1, (now - lastT) / 1000);
+  lastT = now;
+  gameTime += dt;
+  tick(dt);
+  draw();
+  refreshHUD();
+  requestAnimationFrame(frame);
+}
+
+(function init(){
+  if (load()){
+    log("Welcome back! Farm loaded from save.", "good");
+  } else {
+    S = freshState();
+    log("Welcome to Tiny Acres! Till soil, plant crops, and grow a village.");
+    log("Tip: wells speed up nearby crops; houses bring villagers who harvest for you.");
+  }
+  recomputeAux();
+  rebuildVillagers();
+  rebuildAnimals();
+  buildToolbar();
+  renderMilestones();
+  document.getElementById("weatherV").textContent = S.event.label;
+  window.addEventListener("beforeunload", save);
+  requestAnimationFrame(frame);
+})();
+</script>
+
+<a href="index.html" class="hub-link" style="bottom:14px;left:14px">&lt; ARCADE</a>
+<style>
+.hub-link{position:fixed;z-index:10000;font:700 11px/1 "Courier New",monospace;letter-spacing:2px;
+color:#cfd8ea;background:rgba(10,12,20,.72);border:1px solid rgba(140,160,210,.4);
+padding:8px 12px;border-radius:999px;text-decoration:none;opacity:.55;transition:opacity .15s;cursor:pointer;}
+.hub-link:hover{opacity:1;color:#fff;}
+</style>
+</body>
+</html>

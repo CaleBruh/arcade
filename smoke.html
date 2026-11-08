@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arcade — Smoke Test</title>
+<style>
+  :root{--bg:#0a0c14;--panel:#121626;--border:#232a44;--text:#e8ecf8;--muted:#8b94b0;
+        --pass:#49e07a;--fail:#ff5c8a;--run:#f3c969}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:"Avenir Next","Segoe UI",system-ui,sans-serif;
+       padding:28px 20px 60px}
+  h1{font-size:22px;letter-spacing:4px;margin-bottom:4px}
+  #sub{color:var(--muted);font-size:13px;margin-bottom:18px}
+  #verdict{font:700 14px/1 monospace;letter-spacing:2px;padding:8px 14px;border-radius:8px;
+           display:inline-block;margin-bottom:16px;border:1px solid var(--border)}
+  #verdict.pass{color:var(--pass);border-color:var(--pass)}
+  #verdict.fail{color:var(--fail);border-color:var(--fail)}
+  table{border-collapse:collapse;width:100%;max-width:860px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);font-size:13px}
+  th{color:var(--muted);font-size:11px;letter-spacing:2px;text-transform:uppercase}
+  td.status{font-weight:700;font-family:monospace;letter-spacing:1px}
+  tr.pass td.status{color:var(--pass)}
+  tr.fail td.status{color:var(--fail)}
+  tr.running td.status{color:var(--run)}
+  td.err{color:var(--fail);font-family:monospace;font-size:12px;word-break:break-all}
+  #stage{position:fixed;right:12px;bottom:12px;width:480px;height:300px;border:1px solid var(--border);
+         border-radius:8px;overflow:hidden;background:#000;opacity:.9}
+  #stage iframe{width:100%;height:100%;border:0}
+  #stage .tag{position:absolute;top:6px;left:8px;font:700 10px monospace;letter-spacing:1px;
+              color:var(--muted);background:rgba(10,12,20,.8);padding:3px 7px;border-radius:6px}
+</style>
+</head>
+<body>
+<h1>SMOKE TEST</h1>
+<p id="sub">Boots every game from the hub's card list, captures every error, tickles input.</p>
+<div id="verdict">RUNNING…</div>
+<table>
+  <thead><tr><th>Game</th><th>Status</th><th>Time</th><th>Detail</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<div id="stage"><iframe id="frame"></iframe><span class="tag" id="stage-tag">idle</span></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var params = new URLSearchParams(location.search);
+  var ONLY = params.get("game");                       // ?game=ski.html runs one
+  var SECS = Math.max(1, parseFloat(params.get("secs")) || 3); // per-game budget
+
+  var frame = document.getElementById("frame");
+  var rows = document.getElementById("rows");
+  var verdict = document.getElementById("verdict");
+  var stageTag = document.getElementById("stage-tag");
+
+  window.SMOKE = { done: false, pass: null, results: [] };
+
+  // reporter injected before each game's first script: nothing can throw
+  // before it is installed, so first-line errors are attributed correctly
+  // The reporter also wraps requestAnimationFrame: a hidden iframe throttles
+  // rAF to ~nothing, so a game whose frame loop throws (e.g. a missing draw
+  // helper) would never run during the test and look clean. We capture the
+  // latest rAF callback and pump it a few times with synthetic timestamps, so
+  // the render loop actually executes and any throw surfaces here.
+  var REPORTER =
+    "<script>(function(){" +
+    "function send(kind,msg){try{parent.postMessage({smoke:true,kind:kind," +
+    "msg:String(msg).slice(0,300)},'*');}catch(e){}}" +
+    "window.addEventListener('error',function(e){" +
+    "send('error',(e.message||'error')+' @ '+(e.filename||'')+':'+(e.lineno||0));});" +
+    "window.addEventListener('unhandledrejection',function(e){" +
+    "send('rejection',e.reason&&e.reason.message||e.reason);});" +
+    "var ce=console.error;console.error=function(){" +
+    "send('console.error',[].slice.call(arguments).join(' '));" +
+    "return ce.apply(console,arguments);};" +
+    "var raf=window.requestAnimationFrame,lastCb=null;" +
+    "window.requestAnimationFrame=function(cb){lastCb=cb;return raf?raf.call(window,cb):0;};" +
+    "var t=16;window.__smokePump=function(){if(!lastCb)return;" +
+    "var cb=lastCb;lastCb=null;try{cb(t);t+=16;}catch(e){" +
+    "send('error','frame: '+(e.message||e)+' @ '+((e.stack||'').split('\\n')[1]||'').trim());}};" +
+    "window.addEventListener('load',function(){send('loaded','');});" +
+    "})();<\/script>";
+
+  function row(name) {
+    var tr = document.createElement("tr");
+    tr.className = "running";
+    tr.innerHTML = "<td>" + name + "</td><td class='status'>RUNNING</td>" +
+                   "<td class='time'>—</td><td class='err'></td>";
+    rows.appendChild(tr);
+    return tr;
+  }
+
+  function tickle(win) {
+    // generic nudges: wake start screens and first-frame input paths
+    try {
+      var doc = win.document;
+      var cv = doc.querySelector("canvas") || doc.body;
+      ["pointerdown", "mousedown", "mouseup", "click"].forEach(function (t) {
+        cv.dispatchEvent(new win.MouseEvent(t, { bubbles: true, clientX: 50, clientY: 50 }));
+      });
+      [" ", "Enter", "ArrowRight", "w"].forEach(function (k) {
+        win.dispatchEvent(new win.KeyboardEvent("keydown", { key: k, bubbles: true }));
+        doc.dispatchEvent(new win.KeyboardEvent("keydown", { key: k, bubbles: true }));
+        win.dispatchEvent(new win.KeyboardEvent("keyup", { key: k, bubbles: true }));
+        doc.dispatchEvent(new win.KeyboardEvent("keyup", { key: k, bubbles: true }));
+      });
+    } catch (e) { /* tickling must never fail the run */ }
+  }
+
+  function runGame(name) {
+    return fetch(name, { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      })
+      .then(function (src) {
+        return new Promise(function (resolve) {
+          var tr = row(name);
+          stageTag.textContent = name;
+          var errors = [];
+          var loaded = false;
+          var t0 = performance.now();
+
+          function onMsg(e) {
+            var d = e.data;
+            if (!d || !d.smoke) return;
+            if (d.kind === "loaded") loaded = true;
+            else errors.push(d.kind + ": " + d.msg);
+          }
+          window.addEventListener("message", onMsg);
+
+          // reporter goes in before the game's first script
+          var idx = src.indexOf("<script");
+          var doc = idx === -1 ? REPORTER + src
+                               : src.slice(0, idx) + REPORTER + src.slice(idx);
+          frame.srcdoc = doc;
+
+          // half the budget to boot, a tickle, the rest to run
+          setTimeout(function () {
+            if (frame.contentWindow) tickle(frame.contentWindow);
+          }, SECS * 500);
+
+          // pump the captured frame loop a handful of times so a render-loop
+          // throw surfaces even though the hidden iframe throttles real rAF
+          var pumps = 0;
+          var pumpTimer = setInterval(function () {
+            try {
+              var w = frame.contentWindow;
+              if (w && w.__smokePump) w.__smokePump();
+            } catch (e) { /* guard; never fails the run here */ }
+            if (++pumps >= 6) clearInterval(pumpTimer);
+          }, SECS * 120);
+
+          setTimeout(function () {
+            window.removeEventListener("message", onMsg);
+            var ms = Math.round(performance.now() - t0);
+            var ok = loaded && errors.length === 0;
+            var detail = !loaded ? "no load event (boot hung?)" : errors.slice(0, 3).join(" | ");
+            tr.className = ok ? "pass" : "fail";
+            tr.querySelector(".status").textContent = ok ? "PASS" : "FAIL";
+            tr.querySelector(".time").textContent = (ms / 1000).toFixed(1) + "s";
+            tr.querySelector(".err").textContent = ok ? "" : detail;
+            SMOKE.results.push({ game: name, pass: ok, ms: ms, errors: errors, loaded: loaded });
+            frame.srcdoc = "";
+            resolve();
+          }, SECS * 1000);
+        });
+      })
+      .catch(function (e) {
+        var tr = row(name);
+        tr.className = "fail";
+        tr.querySelector(".status").textContent = "FAIL";
+        tr.querySelector(".err").textContent = "fetch: " + e.message;
+        SMOKE.results.push({ game: name, pass: false, ms: 0, errors: [String(e)], loaded: false });
+      });
+  }
+
+  // the hub's cards are the single source of truth for what exists;
+  // ?game= runs any file directly (carded or not — handy for WIP games)
+  (ONLY
+    ? Promise.resolve([ONLY])
+    : fetch("index.html", { cache: "no-store" })
+        .then(function (r) { return r.text(); })
+        .then(function (hub) {
+          var games = [];
+          var re = /<a class="card" href="([^"#]+\.html)"/g, m;
+          while ((m = re.exec(hub))) games.push(m[1]);
+          if (!games.length) throw new Error("no cards found");
+          return games;
+        }))
+    .then(function (games) {
+      return games.reduce(function (p, g) {
+        return p.then(function () { return runGame(g); });
+      }, Promise.resolve());
+    })
+    .then(function () {
+      SMOKE.done = true;
+      SMOKE.pass = SMOKE.results.every(function (r) { return r.pass; });
+      var n = SMOKE.results.length;
+      var failed = SMOKE.results.filter(function (r) { return !r.pass; }).length;
+      verdict.className = SMOKE.pass ? "pass" : "fail";
+      verdict.textContent = SMOKE.pass ? "PASS — " + n + "/" + n + " games clean"
+                                       : "FAIL — " + failed + " of " + n + " games broken";
+      stageTag.textContent = "done";
+    })
+    .catch(function (e) {
+      SMOKE.done = true;
+      SMOKE.pass = false;
+      verdict.className = "fail";
+      verdict.textContent = "HARNESS ERROR — " + e.message;
+    });
+})();
+</script>
+</body>
+</html>

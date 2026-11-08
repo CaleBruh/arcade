@@ -1,0 +1,2417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CASTLE RAYCAST</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#05060a;overflow:hidden;}
+  body{display:flex;align-items:center;justify-content:center;}
+  #screen{image-rendering:pixelated;image-rendering:crisp-edges;background:#000;cursor:crosshair;}
+  #mm{position:fixed;top:12px;right:14px;z-index:400;image-rendering:pixelated;display:none;
+      border:1px solid rgba(140,160,210,.35);border-radius:4px;}
+  #hud{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);display:flex;gap:0;
+      font:700 10px/1 "Courier New",monospace;letter-spacing:2px;color:#6d7890;white-space:nowrap;
+      background:linear-gradient(180deg,#2a2f3a 0%,#1a1e28 8%,#12151e 55%,#0a0c12 100%);
+      border:1px solid #3a4152;border-top:2px solid #4a5268;
+      box-shadow:0 0 0 1px #05060a,0 6px 18px rgba(0,0,0,.8),inset 0 1px 0 rgba(255,255,255,.07);
+      padding:7px 6px 8px;border-radius:4px;z-index:400;pointer-events:none;}
+  #hud span{display:flex;flex-direction:column;align-items:center;gap:4px;
+      padding:2px 16px;border-right:1px solid #2a3040;position:relative;}
+  #hud span:last-child{border-right:none;}
+  #hud span::before{content:"";position:absolute;left:2px;top:-4px;width:2px;height:2px;
+      background:#555f75;border-radius:50%;box-shadow:inset 0 0 1px #000;}
+  #hud b{color:#ffdf8a;font-size:17px;letter-spacing:1px;
+      text-shadow:0 0 6px rgba(255,200,90,.55),0 0 14px rgba(255,170,50,.25);
+      background:linear-gradient(180deg,#07080c,#0d1018);border:1px solid #262c3a;
+      border-radius:3px;padding:3px 7px 2px;min-width:38px;text-align:center;
+      box-shadow:inset 0 2px 5px rgba(0,0,0,.85);}
+  #note{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:400;
+      font:700 12px/1 "Courier New",monospace;letter-spacing:2px;color:#ffe9a3;
+      pointer-events:none;text-shadow:0 1px 4px rgba(0,0,0,.9);opacity:0;}
+  #overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+      background:radial-gradient(ellipse at 50% 38%,rgba(22,30,52,.88) 0%,rgba(5,6,10,.95) 70%);
+      z-index:500;text-align:center;cursor:pointer;
+      font-family:"Courier New",monospace;color:#cfd8ea;}
+  #overlay::after{content:"";position:absolute;inset:0;pointer-events:none;
+      background:repeating-linear-gradient(0deg,rgba(0,0,0,.22) 0 1px,transparent 1px 3px);}
+  #overlay h1{font-size:36px;letter-spacing:9px;margin:0 0 6px;color:#f4f7ff;
+      text-shadow:0 0 22px rgba(120,160,255,.5),0 0 4px rgba(200,220,255,.8),0 3px 0 rgba(0,0,0,.6);}
+  #overlay h2{font-size:15px;letter-spacing:5px;margin:0 0 22px;color:#8fa3c8;font-weight:400;
+      text-shadow:0 1px 0 #000;}
+  #overlay h2::before,#overlay h2::after{content:"\2014";color:#3d4a66;margin:0 10px;}
+  #overlay .ctl{display:inline-block;text-align:left;font-size:12px;letter-spacing:2px;line-height:2.1;
+      color:#aab6cf;border:1px solid rgba(140,160,210,.3);border-radius:6px;padding:16px 26px;margin-bottom:22px;
+      background:linear-gradient(180deg,rgba(16,20,32,.9),rgba(8,10,16,.9));
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 8px 24px rgba(0,0,0,.6);}
+  #overlay .ctl b{color:#ffe9a3;display:inline-block;min-width:150px;
+      text-shadow:0 0 8px rgba(255,210,120,.35);}
+  #overlay .stats{display:inline-block;min-width:250px;margin-bottom:22px;text-align:left;
+      border:1px solid rgba(140,160,210,.3);border-radius:6px;padding:14px 26px;
+      background:linear-gradient(180deg,rgba(16,20,32,.9),rgba(8,10,16,.9));
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 8px 24px rgba(0,0,0,.6);}
+  #overlay .stats .row{display:flex;justify-content:space-between;align-items:baseline;gap:34px;
+      font-size:11px;letter-spacing:3px;color:#8fa3c8;padding:6px 0;
+      border-bottom:1px dashed rgba(140,160,210,.14);}
+  #overlay .stats .row:last-child{border-bottom:none;}
+  #overlay .stats .row em{font-style:normal;color:#ffe9a3;font-size:15px;letter-spacing:2px;
+      text-shadow:0 0 9px rgba(255,210,120,.45);}
+  #overlay .go{font-size:13px;letter-spacing:3px;color:#ffe9a3;animation:blink 1.2s steps(2) infinite;}
+  @keyframes blink{50%{opacity:.25;}}
+  #overlay .vol{font-size:12px;letter-spacing:2px;color:#aab6cf;margin-bottom:18px;}
+  #overlay .vol input[type=range]{width:150px;vertical-align:middle;accent-color:#ffe9a3;cursor:pointer;}
+  #touch{position:fixed;inset:0;z-index:450;display:none;pointer-events:none;}
+  #stickBase{position:absolute;left:36px;bottom:110px;width:96px;height:96px;border-radius:50%;
+      border:2px solid rgba(200,215,240,.35);background:rgba(20,24,36,.22);}
+  #stickKnob{position:absolute;left:30px;top:30px;width:36px;height:36px;border-radius:50%;
+      background:rgba(200,215,240,.4);}
+  .tbtn{position:absolute;width:62px;height:62px;border-radius:50%;pointer-events:auto;
+      border:2px solid rgba(200,215,240,.35);background:rgba(20,24,36,.32);color:#cfd8ea;
+      font:700 11px/58px "Courier New",monospace;text-align:center;letter-spacing:1px;
+      -webkit-user-select:none;user-select:none;touch-action:none;}
+  #btnFire{right:28px;bottom:96px;}
+  #btnUse{right:104px;bottom:152px;}
+  #btnWpn{right:104px;bottom:40px;}
+</style>
+</head>
+<body>
+<canvas id="screen" width="320" height="200"></canvas>
+<canvas id="mm"></canvas>
+<div id="hud">
+  <span>HEALTH <b id="uhp">100</b></span>
+  <span>AMMO <b id="uam">24</b></span>
+  <span>SHELLS <b id="ush">0</b></span>
+  <span>FLOOR <b id="ulv">1</b></span>
+  <span>KILLS <b id="ukl">0/0</b></span>
+</div>
+<div id="note"></div>
+<div id="overlay"></div>
+<div id="touch">
+  <div id="stickBase"><div id="stickKnob"></div></div>
+  <div class="tbtn" id="btnFire">FIRE</div>
+  <div class="tbtn" id="btnUse">USE</div>
+  <div class="tbtn" id="btnWpn">WPN</div>
+</div>
+
+<!-- arcade-shared:start -->
+<script>
+/* Arcade shared runtime.
+   Single source of truth for cross-game boilerplate. build-arcade.py injects
+   this into every game between the arcade-shared markers (and keeps the copies
+   in sync on each run) — edit THIS file, then run: python3 build-arcade.py */
+(function () {
+  "use strict";
+
+  /* ---- safe storage: never throws (Safari private mode, disabled storage) ---- */
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, String(v)); return true; } catch (e) { return false; } },
+    remove: function (k) { try { localStorage.removeItem(k); } catch (e) {} },
+    num: function (k) { var n = parseFloat(store.get(k)); return isFinite(n) ? n : 0; },
+    json: function (k) { try { return JSON.parse(store.get(k)); } catch (e) { return null; } }
+  };
+
+  /* ---- audio: one wrap of the AudioContext constructor gives us both
+     a tab-hidden auto-suspend and an arcade-wide master volume ----
+     Every context's .destination is rerouted through a shared gain node, so
+     the settings panel's master volume applies to every game with no per-game
+     wiring; the games' own volume sliders keep working underneath it.
+     Only contexts *we* suspended are resumed, so a game's own
+     mute-by-suspend behaviour is left alone. */
+  var contexts = [];
+  var autoSuspended = [];
+  var masters = [];
+  function masterLevel() {
+    if (store.get("arcade_master_muted") === "1") return 0;
+    var v = parseFloat(store.get("arcade_master"));
+    return isFinite(v) ? Math.min(Math.max(v, 0), 1) : 1;
+  }
+  function applyMaster() {
+    var lvl = masterLevel();
+    masters.forEach(function (g) {
+      try { g.gain.setTargetAtTime(lvl, g.context.currentTime, 0.02); } catch (e) {}
+    });
+  }
+  ["AudioContext", "webkitAudioContext"].forEach(function (name) {
+    var Orig = window[name];
+    if (!Orig) return;
+    function Patched() {
+      var ctx = arguments.length
+        ? new (Function.prototype.bind.apply(Orig, [null].concat([].slice.call(arguments))))()
+        : new Orig();
+      contexts.push(ctx);
+      try {
+        var realDest = ctx.destination;
+        var master = ctx.createGain();
+        master.gain.value = masterLevel();
+        master.connect(realDest);
+        Object.defineProperty(ctx, "destination", {
+          get: function () { return master; },
+          configurable: true
+        });
+        masters.push(master);
+      } catch (e) { /* master volume is best-effort */ }
+      return ctx;
+    }
+    Patched.prototype = Orig.prototype;
+    window[name] = Patched;
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      contexts.forEach(function (ctx) {
+        if (ctx.state === "running") {
+          autoSuspended.push(ctx);
+          ctx.suspend().catch(function () {});
+        }
+      });
+    } else {
+      autoSuspended.splice(0).forEach(function (ctx) {
+        if (ctx.state === "suspended") ctx.resume().catch(function () {});
+      });
+    }
+  });
+
+  /* ---- reduced motion: tame decorative CSS animation, expose a flag the
+     games consult for canvas effects (shake, flashes, particles). The OS
+     setting is the default; the settings panel can override it either way
+     (arcade_rm: "auto" | "on" | "off"). ---- */
+  var rmQuery = window.matchMedia ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+  function reducedMotion() {
+    var o = store.get("arcade_rm");
+    if (o === "on") return true;
+    if (o === "off") return false;
+    return !!(rmQuery && rmQuery.matches);
+  }
+  var rmStyle = document.createElement("style");
+  (document.head || document.documentElement).appendChild(rmStyle);
+  function syncRMStyle() {
+    rmStyle.textContent = reducedMotion()
+      ? "*,*::before,*::after{animation-duration:.01ms !important;" +
+        "animation-iteration-count:1 !important;transition-duration:.01ms !important;" +
+        "scroll-behavior:auto !important}"
+      : "";
+  }
+  syncRMStyle();
+  if (rmQuery && rmQuery.addEventListener) rmQuery.addEventListener("change", syncRMStyle);
+
+  /* ---- on-screen touch controls ----
+     Created on demand by a game calling arcade.touch.* at the end of its own
+     script. Nothing is shown unless the pointer is coarse (or ?touch=1 forces
+     them for testing). Key buttons synthesize keydown/keyup on window+document
+     with both .key and .code set, so games keep their existing handlers. */
+  var touchOn = (window.matchMedia && matchMedia("(pointer: coarse)").matches) ||
+                /[?&]touch=1\b/.test(location.search);
+  var touchLayer = null;
+  function ensureLayer() {
+    if (!touchLayer) {
+      touchLayer = document.createElement("div");
+      touchLayer.id = "arcade-touch";
+      touchLayer.style.cssText =
+        "position:fixed;inset:0;z-index:15000;pointer-events:none;" +
+        "user-select:none;-webkit-user-select:none";
+      (document.body || document.documentElement).appendChild(touchLayer);
+    }
+    return touchLayer;
+  }
+  function mkEl(style, size) {
+    var el = document.createElement("div");
+    el.style.cssText =
+      "position:absolute;pointer-events:auto;touch-action:none;box-sizing:border-box;" +
+      "width:" + size + "px;height:" + size + "px;border-radius:50%;" +
+      "background:rgba(140,160,210,.13);border:1px solid rgba(140,160,210,.45);" +
+      "color:rgba(232,236,248,.85);display:flex;align-items:center;justify-content:center;" +
+      "font:700 13px/1 system-ui,sans-serif;letter-spacing:1px;" + (style || "");
+    return el;
+  }
+  function sendKey(type, key, code) {
+    var ev = new KeyboardEvent(type, { key: key, code: code, bubbles: true, cancelable: true });
+    window.dispatchEvent(ev);
+    document.dispatchEvent(ev);
+  }
+  function touchButton(o) {
+    if (!touchOn) return null;
+    var el = mkEl(o.style, o.size || 54);
+    el.textContent = o.label || "";
+    if (o.label) el.dataset.k = o.label;
+    var timer = 0;
+    function down(e) {
+      e.preventDefault();
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
+      el.style.background = "rgba(140,160,210,.34)";
+      if (o.onDown) o.onDown();
+      if (o.repeat) timer = setInterval(function () { if (o.onDown) o.onDown(); }, o.repeat);
+    }
+    function up() {
+      el.style.background = "rgba(140,160,210,.13)";
+      if (timer) { clearInterval(timer); timer = 0; }
+      if (o.onUp) o.onUp();
+    }
+    el.addEventListener("pointerdown", down);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+    ensureLayer().appendChild(el);
+    return el;
+  }
+  function keyButton(o) {
+    var held = false;
+    return touchButton({
+      label: o.label, style: o.style, size: o.size, repeat: o.repeat,
+      onDown: function () { held = true; sendKey("keydown", o.key, o.code || o.key); },
+      onUp: function () { if (held) { held = false; sendKey("keyup", o.key, o.code || o.key); } }
+    });
+  }
+  function dpad(o) {
+    if (!touchOn) return;
+    var s = o.size || 52, g = o.gap || 6;
+    var bx = o.left != null ? o.left : 16, by = o.bottom != null ? o.bottom : 16;
+    function at(cx, cy) { return "left:" + cx + "px;bottom:" + cy + "px"; }
+    var m = o.map;
+    keyButton({ label: "▲", key: m.up.key, code: m.up.code, size: s, repeat: o.repeat, style: at(bx + s + g, by + 2 * (s + g)) });
+    keyButton({ label: "◀", key: m.left.key, code: m.left.code, size: s, repeat: o.repeat, style: at(bx, by + s + g) });
+    keyButton({ label: "▶", key: m.right.key, code: m.right.code, size: s, repeat: o.repeat, style: at(bx + 2 * (s + g), by + s + g) });
+    keyButton({ label: "▼", key: m.down.key, code: m.down.code, size: s, repeat: o.repeat, style: at(bx + s + g, by) });
+  }
+  function arrowDpad(o) {
+    o = o || {};
+    o.map = {
+      up: { key: "ArrowUp", code: "ArrowUp" }, down: { key: "ArrowDown", code: "ArrowDown" },
+      left: { key: "ArrowLeft", code: "ArrowLeft" }, right: { key: "ArrowRight", code: "ArrowRight" }
+    };
+    return dpad(o);
+  }
+  function stick(o) {
+    if (!touchOn) return null;
+    var size = o.size || 124;
+    var base = mkEl(o.style, size);
+    if (o.label) base.dataset.k = o.label;
+    var knob = document.createElement("div");
+    knob.style.cssText =
+      "position:absolute;width:44%;height:44%;border-radius:50%;pointer-events:none;" +
+      "background:rgba(140,160,210,.4);left:50%;top:50%;transform:translate(-50%,-50%)";
+    base.appendChild(knob);
+    var active = false;
+    function setKnob(nx, ny) {
+      knob.style.left = (50 + nx * 32) + "%";
+      knob.style.top = (50 + ny * 32) + "%";
+    }
+    function report(e) {
+      var r = base.getBoundingClientRect();
+      var dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+      var dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+      var mag = Math.hypot(dx, dy);
+      if (mag > 1) { dx /= mag; dy /= mag; }
+      setKnob(dx, dy);
+      if (o.onMove) o.onMove(dx, dy, true);
+    }
+    base.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      try { base.setPointerCapture(e.pointerId); } catch (err) {}
+      active = true;
+      report(e);
+    });
+    base.addEventListener("pointermove", function (e) { if (active) report(e); });
+    function end() {
+      if (!active) return;
+      active = false;
+      setKnob(0, 0);
+      if (o.onMove) o.onMove(0, 0, false);
+    }
+    base.addEventListener("pointerup", end);
+    base.addEventListener("pointercancel", end);
+    ensureLayer().appendChild(base);
+    return base;
+  }
+
+  /* ---- play-time heartbeat: the hub sorts and labels cards from this ----
+     Standalone pages identify themselves by filename; inside the all-in-one
+     bundle the overlay stamps data-arcade-game on the iframe. The smoke
+     harness's srcdoc frames carry no stamp, so test runs never pollute it. */
+  var GAME_ID = (function () {
+    try {
+      if (window.frameElement && window.frameElement.dataset.arcadeGame)
+        return window.frameElement.dataset.arcadeGame;
+      if (window.frameElement) return null; /* unstamped frame (smoke harness) */
+    } catch (e) { return null; }
+    var p = location.pathname.split("/").pop();
+    return /\.html$/.test(p) && ["index.html", "arcade.html", "smoke.html"].indexOf(p) === -1 ? p : null;
+  })();
+  if (GAME_ID) {
+    var visSince = document.hidden ? 0 : Date.now();
+    var metaFlush = function () {
+      var add = 0, now = Date.now();
+      if (visSince) { add = (now - visSince) / 1000; visSince = document.hidden ? 0 : now; }
+      else if (add === 0) return; /* hidden and idle: not "playing" */
+      var meta = store.json("arcade_meta_v1") || {};
+      var g = meta[GAME_ID] || (meta[GAME_ID] = { secs: 0 });
+      g.secs = Math.round((g.secs || 0) + add);
+      g.last = now;
+      store.set("arcade_meta_v1", JSON.stringify(meta));
+    };
+    metaFlush();
+    setInterval(metaFlush, 15000);
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { metaFlush(); visSince = 0; }
+      else visSince = Date.now();
+    });
+    window.addEventListener("pagehide", metaFlush);
+  }
+
+  /* ---- settings panel: gear chip on the right edge; Escape closes.
+     Master volume and motion apply to every game through the shared
+     runtime, so this is the same panel with the same behaviour everywhere. */
+  var panel = null, chip = null;
+  function settingsOpen() { return !!(panel && panel.style.display !== "none"); }
+  function motionLabel() {
+    var o = store.get("arcade_rm");
+    return o === "on" ? "MOTION: REDUCED" : o === "off" ? "MOTION: FULL" : "MOTION: AUTO";
+  }
+  function buildPanel() {
+    if (panel) return;
+    panel = document.createElement("div");
+    panel.id = "arcade-settings";
+    panel.style.cssText =
+      "position:fixed;inset:0;z-index:16000;display:none;" +
+      "background:rgba(4,6,12,.55);user-select:none;-webkit-user-select:none";
+    var card = document.createElement("div");
+    card.style.cssText =
+      "position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);" +
+      "min-width:260px;padding:22px 26px;border-radius:14px;" +
+      "background:rgba(14,17,30,.96);border:1px solid rgba(140,160,210,.4);" +
+      "color:#e8ecf8;font:13px/1.5 system-ui,sans-serif";
+    card.innerHTML =
+      '<div style="font:700 13px/1 system-ui;letter-spacing:3px;margin-bottom:16px">ARCADE SETTINGS</div>' +
+      '<label style="font-size:11px;letter-spacing:2px;color:#8b94b0">MASTER VOLUME</label><br>' +
+      '<input id="arc-set-vol" type="range" min="0" max="100" style="width:100%;margin:6px 0 14px">' +
+      '<button id="arc-set-mute" style="' + btnCss() + '"></button> ' +
+      '<button id="arc-set-rm" style="' + btnCss() + '"></button>' +
+      '<div style="font-size:11px;color:#8b94b0;margin-top:14px">Applies to every game. ' +
+      'Per-game volume controls still work underneath.<br>Esc closes.</div>';
+    panel.appendChild(card);
+    panel.addEventListener("pointerdown", function (e) { if (e.target === panel) toggleSettings(false); });
+    (document.body || document.documentElement).appendChild(panel);
+
+    var vol = card.querySelector("#arc-set-vol");
+    var mute = card.querySelector("#arc-set-mute");
+    var rm = card.querySelector("#arc-set-rm");
+    function syncUI() {
+      var v = parseFloat(store.get("arcade_master"));
+      vol.value = Math.round((isFinite(v) ? Math.min(Math.max(v, 0), 1) : 1) * 100);
+      mute.textContent = store.get("arcade_master_muted") === "1" ? "UNMUTE" : "MUTE";
+      rm.textContent = motionLabel();
+    }
+    vol.addEventListener("input", function () {
+      store.set("arcade_master", vol.value / 100);
+      store.set("arcade_master_muted", "0");
+      applyMaster(); syncUI();
+    });
+    mute.addEventListener("click", function () {
+      store.set("arcade_master_muted", store.get("arcade_master_muted") === "1" ? "0" : "1");
+      applyMaster(); syncUI();
+    });
+    rm.addEventListener("click", function () {
+      var o = store.get("arcade_rm");
+      store.set("arcade_rm", o === "on" ? "off" : o === "off" ? "auto" : "on");
+      syncRMStyle(); syncUI();
+    });
+    panel.syncUI = syncUI;
+  }
+  function btnCss() {
+    return "font:700 11px/1 system-ui;letter-spacing:2px;color:#cfd8ea;cursor:pointer;" +
+      "background:rgba(140,160,210,.12);border:1px solid rgba(140,160,210,.4);" +
+      "padding:8px 12px;border-radius:999px";
+  }
+  function toggleSettings(show) {
+    buildPanel();
+    var to = show != null ? show : !settingsOpen();
+    panel.style.display = to ? "block" : "none";
+    if (to) panel.syncUI();
+  }
+  function mountChip() {
+    if (chip || !document.body) return;
+    chip = document.createElement("div");
+    chip.id = "arcade-settings-chip";
+    chip.title = "Arcade settings";
+    chip.textContent = "⚙";
+    chip.style.cssText =
+      "position:fixed;right:8px;top:50%;transform:translateY(-50%);z-index:15990;" +
+      "width:30px;height:30px;border-radius:50%;display:flex;align-items:center;" +
+      "justify-content:center;cursor:pointer;font-size:15px;color:#cfd8ea;" +
+      "background:rgba(10,12,20,.6);border:1px solid rgba(140,160,210,.35);" +
+      "opacity:.4;transition:opacity .15s;user-select:none;-webkit-user-select:none";
+    chip.addEventListener("mouseenter", function () { chip.style.opacity = "1"; });
+    chip.addEventListener("mouseleave", function () { chip.style.opacity = ".4"; });
+    chip.addEventListener("click", function () { toggleSettings(); });
+    document.body.appendChild(chip);
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", mountChip);
+  } else {
+    mountChip();
+  }
+  /* capture-phase: while the panel is open, keys belong to the panel */
+  window.addEventListener("keydown", function (e) {
+    if (!settingsOpen()) return;
+    if (e.key === "Escape") toggleSettings(false);
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  }, true);
+  window.addEventListener("keyup", function (e) {
+    if (settingsOpen()) e.stopImmediatePropagation();
+  }, true);
+
+  window.arcade = {
+    store: store,
+    reducedMotion: reducedMotion,
+    settings: { open: function () { toggleSettings(true); }, close: function () { toggleSettings(false); } },
+    /* clamp a rAF delta so a backgrounded tab doesn't produce a huge step */
+    clampDt: function (dt, max) { return Math.min(Math.max(dt, 0), max || 0.1); },
+    /* daily-challenge helpers: one date key and one seed, stable all day,
+       shared by every game so "today's run" means the same thing everywhere */
+    dailyKey: function () {
+      var d = new Date(), m = d.getMonth() + 1, da = d.getDate();
+      return d.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (da < 10 ? "0" : "") + da;
+    },
+    dailySeed: function () {
+      var d = new Date();
+      return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+    },
+    /* mulberry32: tiny deterministic PRNG for seeded runs */
+    seededRand: function (seed) {
+      var a = seed >>> 0;
+      return function () {
+        a = (a + 0x6D2B79F5) >>> 0;
+        var t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    },
+    touch: {
+      available: touchOn,
+      sendKey: sendKey,
+      button: touchButton,
+      key: keyButton,
+      dpad: dpad,
+      arrowDpad: arrowDpad,
+      stick: stick
+    },
+    /* Run recorder — shared by the ghost racer and replay trophies.
+
+       A game calls start()/sample()/finish() and gets both a local ghost and,
+       when the arcade server happens to be serving the page, a shared one.
+       Every server call is best-effort: these games are static files that must
+       keep working opened straight off the disk, so a failed fetch is silently
+       ignored rather than surfaced. */
+    run: (function () {
+      var RATE_MS = 100;            // 10 Hz is plenty to interpolate a ghost
+      var MAX_FRAMES = 4000;        // ~6.5 minutes; matches the server cap
+      var cur = null;
+
+      function localKey(game) { return 'arcade_ghost_' + game; }
+
+      function post(path, body) {
+        try {
+          return fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' },
+                               body: JSON.stringify(body) })
+            .then(function (r) { return r.json(); })
+            .catch(function () { return null; });
+        } catch (e) { return Promise.resolve(null); }
+      }
+
+      return {
+        start: function (game, seed) {
+          cur = { game: game, seed: seed === undefined ? null : seed, frames: [], last: -1e9 };
+        },
+        /* Call every frame; it throttles itself. Pass the few numbers needed to
+           redraw the ghost — position, lane, whatever the game interpolates. */
+        sample: function (t) {
+          if (!cur || cur.frames.length >= MAX_FRAMES) return;
+          if (t - cur.last < RATE_MS / 1000) return;
+          cur.last = t;
+          cur.frames.push(Array.prototype.slice.call(arguments, 1).map(function (v) {
+            return Math.round((Number(v) || 0) * 100) / 100;   // 2dp keeps ghosts small
+          }));
+        },
+        recording: function () { return !!cur; },
+        /* Keep the run if it beat the stored ghost, and offer it to the server. */
+        finish: function (score, name) {
+          if (!cur || !cur.frames.length) { cur = null; return Promise.resolve(null); }
+          var ghost = { game: cur.game, seed: cur.seed, frames: cur.frames,
+                        score: Number(score) || 0,
+                        name: name || localStorage.getItem('arcade_name_v1') || 'player' };
+          cur = null;
+          try {
+            var prevRaw = localStorage.getItem(localKey(ghost.game));
+            var prev = prevRaw ? JSON.parse(prevRaw) : null;
+            if (!prev || ghost.score > prev.score) {
+              localStorage.setItem(localKey(ghost.game), JSON.stringify(ghost));
+            }
+          } catch (e) { /* quota or bad JSON — the server copy still matters */ }
+          return post('/api/ghost', ghost);
+        },
+        discard: function () { cur = null; },
+        /* Best available ghost: the server's if reachable, else the local one. */
+        best: function (game) {
+          var local = null;
+          try {
+            var raw = localStorage.getItem(localKey(game));
+            if (raw) local = JSON.parse(raw);
+          } catch (e) {}
+          try {
+            return fetch('/api/ghosts?game=' + encodeURIComponent(game))
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                var remote = d && d.list && d.list[0];
+                if (remote && (!local || remote.score > local.score)) return remote;
+                return local;
+              })
+              .catch(function () { return local; });
+          } catch (e) { return Promise.resolve(local); }
+        },
+        /* Read a ghost at an arbitrary time, interpolating between samples. */
+        at: function (ghost, t) {
+          if (!ghost || !ghost.frames || !ghost.frames.length) return null;
+          var f = ghost.frames, i = Math.floor(t / (RATE_MS / 1000));
+          if (i >= f.length - 1) return f[f.length - 1];
+          if (i < 0) return f[0];
+          var a = f[i], b = f[i + 1], k = (t / (RATE_MS / 1000)) - i, out = [];
+          for (var j = 0; j < a.length; j++) out.push(a[j] + (b[j] - a[j]) * k);
+          return out;
+        }
+      };
+    })()
+  };
+})();
+</script>
+<!-- arcade-shared:end -->
+<script>
+'use strict';
+// ============================================================= CONSTANTS
+var W = 320, H = 200, TEX = 64;
+var cv = document.getElementById('screen');
+var g  = cv.getContext('2d');
+g.imageSmoothingEnabled = false;
+var mm = document.getElementById('mm');
+var mx = mm.getContext('2d');
+var ov = document.getElementById('overlay');
+var noteEl = document.getElementById('note');
+
+function fit(){
+  var a = W / H, w = innerWidth, h = innerHeight;
+  if (w / h > a) w = h * a; else h = w / a;
+  cv.style.width = Math.floor(w) + 'px';
+  cv.style.height = Math.floor(h) + 'px';
+}
+addEventListener('resize', fit); fit();
+
+// ============================================================= LEVELS
+/*MAPS_START*/
+// Legend: 1/2/3 walls, 4/5/6 secret push-walls (brick/stone/metal), D door,
+// G gold-locked door, S silver-locked door, X exit, P player start,
+// g guard, h medkit, a ammo, k gold key, s silver key, w shotgun, c shells
+var MAPS = [
+{ name:'GUARD POST', m:[
+"1111111111111111111111",
+"1P   1    a1         1",
+"1    1     1    g    1",
+"1    D     D         1",
+"1    1     1      h  1",
+"1g   1  h  1111111D111",
+"111D11     1         1",
+"1    1     1   g     1",
+"1 a  1  g  D         1",
+"1    1     1    a    1",
+"1 k  1     11111111111",
+"1 g  111D111         1",
+"111411     1   g     1",
+"1w c 1     G        X1",
+"1h   1 a   1         1",
+"1111111111111111111111"
+]},
+{ name:'STONE HALLS', m:[
+"222222222222222222222222",
+"2P    2        a       2",
+"2     2   222222222D2222",
+"2  g  D   2            2",
+"2     2   2  g    h    2",
+"2     2   2            2",
+"222D222   2   22222    2",
+"2     2   2   2   2  g 2",
+"2  h  2   D   2saw2    2",
+"2     2   2   2   2    2",
+"2  g  2   2   22D22    2",
+"2     2   2         2222",
+"2222222   2     g   5a 2",
+"2  a c    2         2ch2",
+"2   g     22222222222222",
+"2      h  S           X2",
+"222222222222222222222222"
+]},
+{ name:'REACTOR CORE', m:[
+"333333333333333333333333",
+"3P     3   a  3        3",
+"3      3      3   g    3",
+"3  g   D      D        3",
+"3      3      3        3",
+"3333D333      33333D3333",
+"3      3  g   3        3",
+"3  h   3      3  h  g  3",
+"3      D      3        3",
+"3   g  3      33G3333333",
+"3      3  a c 3        3",
+"33D33333      3  g   a 3",
+"3   6  3      3        3",
+"3  g3ca3  g   G        3",
+"3  h 33D      3    g   3",
+"3k     3      3   h   X3",
+"333333333333333333333333"
+]},
+{ name:'COLD STORAGE', m:[
+"111111111111111111111111",
+"1P    1     a    1     1",
+"1     1          1  g  1",
+"1     D          D     1",
+"1 g   1    h     1   h 1",
+"1111111  1111111D1111111",
+"1        1             1",
+"1   g    1   g      a  1",
+"1  a     D             1",
+"1        1  11111111   1",
+"1111D1111   1      1   1",
+"1           1   k  1 g 1",
+"1  g    c   1      D   1",
+"1      1111111111111   1",
+"1  h w                 1",
+"1        g       G    X1",
+"111111111111111111111111"
+]},
+{ name:'THE CATACOMBS', m:[
+"222222222222222222222222",
+"2P   2        2       a2",
+"2    2   g    2   222222",
+"2    D        D       22",
+"2 h  2        2   g   22",
+"222222  22222222222   22",
+"2       2             22",
+"2  g    2   a   22222 22",
+"2       2       2   2 22",
+"2  a c  D       2 s 2 22",
+"2       2       2   2 22",
+"222D2   2   g   22D22 22",
+"2   2   2             22",
+"2   2   22222222   g  22",
+"2 k 2          2    a 22",
+"2   2   g      2  h   22",
+"2222222222  S         X2",
+"222222222222222222222222"
+]},
+{ name:'COMMAND SPIRE', m:[
+"333333333333333333333333",
+"3P     3    a   3     g3",
+"3      3        3      3",
+"3  g   D        D   h  3",
+"3      3   g    3      3",
+"33333D33   3333333D33333",
+"3      3               3",
+"3  h   3    g     g    3",
+"3      D          a    3",
+"3  g   3   3333333333  3",
+"3      3   3   k    3  3",
+"333D3333   3        G  3",
+"3     6    3   g       3",
+"3  g 3ca3  3      333333",
+"3  h  33D  G   g      33",
+"3k     3   3      s   33",
+"3      3   3   g      X3",
+"333333333333333333333333"
+]}
+];
+/*MAPS_END*/
+
+// ============================================================= TEXTURES
+// All texture work happens once at load. Walls bake ambient-occlusion style
+// edge darkening so tile seams read as depth even under flat column lighting.
+function makeTex(fn){
+  var c = document.createElement('canvas'); c.width = TEX; c.height = TEX;
+  fn(c.getContext('2d')); return c;
+}
+function darken(src){
+  return makeTex(function(x){
+    x.drawImage(src, 0, 0);
+    x.fillStyle = 'rgba(4,6,14,0.36)'; x.fillRect(0, 0, TEX, TEX);
+  });
+}
+// baked AO: soft darkening at tile edges + faint top shadow / floor contact
+function aoTex(src){
+  return makeTex(function(x){
+    x.drawImage(src, 0, 0);
+    var gr = x.createLinearGradient(0, 0, 7, 0);
+    gr.addColorStop(0, 'rgba(0,0,0,0.42)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = gr; x.fillRect(0, 0, 7, TEX);
+    gr = x.createLinearGradient(TEX, 0, TEX - 7, 0);
+    gr.addColorStop(0, 'rgba(0,0,0,0.42)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = gr; x.fillRect(TEX - 7, 0, 7, TEX);
+    gr = x.createLinearGradient(0, 0, 0, 6);
+    gr.addColorStop(0, 'rgba(0,0,0,0.5)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = gr; x.fillRect(0, 0, TEX, 6);
+    gr = x.createLinearGradient(0, TEX, 0, TEX - 8);
+    gr.addColorStop(0, 'rgba(0,0,0,0.55)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = gr; x.fillRect(0, TEX - 8, TEX, 8);
+  });
+}
+function pair(c){ var a = aoTex(c); return [a, darken(a)]; }
+function speck(x, n, col, w, h){
+  x.fillStyle = col;
+  for (var i = 0; i < n; i++) x.fillRect((Math.random()*64)|0, (Math.random()*64)|0, w||1, h||1);
+}
+
+var texBrick = makeTex(function(x){
+  // deep mortar base
+  x.fillStyle = '#2e1812'; x.fillRect(0, 0, 64, 64);
+  x.fillStyle = '#3c241c';
+  for (var i = 0; i < 70; i++) x.fillRect((Math.random()*64)|0, (Math.random()*64)|0, 2, 1);
+  var cols = ['#8e3f2d','#84392a','#9a4734','#7a3526','#914536'];
+  for (var r = 0; r < 8; r++){
+    var off = (r % 2) * 8;
+    for (var b = -1; b < 5; b++){
+      var bx = b * 16 + off + 1, by = r * 8 + 1;
+      var col = cols[(r * 5 + b + 9) % 5];
+      x.fillStyle = col; x.fillRect(bx, by, 14, 6);
+      // mortar depth: lit top edge, shadowed bottom edge of each brick
+      x.fillStyle = 'rgba(255,220,190,0.14)'; x.fillRect(bx, by, 14, 1);
+      x.fillStyle = 'rgba(255,220,190,0.08)'; x.fillRect(bx, by, 1, 6);
+      x.fillStyle = 'rgba(20,8,4,0.45)'; x.fillRect(bx, by + 5, 14, 1);
+      x.fillStyle = 'rgba(20,8,4,0.3)'; x.fillRect(bx + 13, by + 1, 1, 5);
+      // per-brick tone variance and pitting
+      if (((r * 7 + b * 3) & 3) === 0){
+        x.fillStyle = 'rgba(0,0,0,0.12)'; x.fillRect(bx, by, 14, 6);
+      }
+      if (((r * 5 + b) & 7) === 2){
+        x.fillStyle = 'rgba(30,12,8,0.5)';
+        x.fillRect(bx + 3 + ((r*b)&7), by + 2, 2, 2);
+      }
+    }
+  }
+  // damp stains dripping from mortar lines
+  x.fillStyle = 'rgba(14,10,8,0.28)';
+  for (i = 0; i < 5; i++){
+    var sx = 4 + ((Math.random()*56)|0), sy = ((Math.random()*5)|0) * 8 + 7;
+    var len = 6 + ((Math.random()*14)|0);
+    x.fillRect(sx, sy, 2, len);
+    x.fillRect(sx - 1, sy, 4, 3);
+  }
+  speck(x, 120, 'rgba(0,0,0,0.22)', 1, 1);
+  speck(x, 40, 'rgba(255,200,170,0.1)', 1, 1);
+});
+
+var texStone = makeTex(function(x){
+  x.fillStyle = '#2e2e36'; x.fillRect(0, 0, 64, 64);
+  var cols = ['#6b6b73','#63636b','#72727a','#5c5c64','#68686e'];
+  var r = 0;
+  for (var y = 0; y < 64; y += 16){
+    var off = (r % 2) * 11; r++;
+    for (var b = -1; b < 4; b++){
+      var bx = b * 22 + off + 1, by = y + 1;
+      x.fillStyle = cols[(r * 3 + b + 7) % 5];
+      x.fillRect(bx, by, 20, 14);
+      // chiselled bevel
+      x.fillStyle = 'rgba(230,235,255,0.13)';
+      x.fillRect(bx, by, 20, 1); x.fillRect(bx, by, 1, 14);
+      x.fillStyle = 'rgba(8,8,16,0.5)';
+      x.fillRect(bx, by + 13, 20, 1); x.fillRect(bx + 19, by, 1, 14);
+      // rough face chips
+      x.fillStyle = 'rgba(0,0,0,0.18)';
+      x.fillRect(bx + 4 + ((r*b+8)&7), by + 3, 3, 2);
+      x.fillRect(bx + 11, by + 8 + ((r+b)&3), 2, 2);
+      x.fillStyle = 'rgba(255,255,255,0.07)';
+      x.fillRect(bx + 6, by + 5, 2, 1);
+    }
+  }
+  // cracks across a few blocks
+  x.strokeStyle = 'rgba(10,10,18,0.6)'; x.lineWidth = 1;
+  x.beginPath(); x.moveTo(8, 20); x.lineTo(13, 26); x.lineTo(11, 30);
+  x.moveTo(44, 36); x.lineTo(50, 41); x.lineTo(47, 46); x.lineTo(52, 47);
+  x.stroke();
+  // moss clinging to lower mortar lines
+  var moss = ['rgba(52,84,40,0.5)','rgba(64,98,46,0.4)','rgba(40,66,32,0.55)'];
+  for (var i = 0; i < 26; i++){
+    var mxp = (Math.random()*64)|0;
+    var myp = 30 + ((Math.random()*34)|0);
+    if ((myp & 15) > 4 && Math.random() < 0.6) continue;  // prefer seams
+    x.fillStyle = moss[i % 3];
+    x.fillRect(mxp, myp, 2 + ((Math.random()*3)|0), 1 + ((Math.random()*2)|0));
+  }
+  speck(x, 130, 'rgba(0,0,0,0.22)', 2, 1);
+  speck(x, 60, 'rgba(255,255,255,0.06)', 1, 1);
+});
+
+var texMetal = makeTex(function(x){
+  x.fillStyle = '#39434e'; x.fillRect(0, 0, 64, 64);
+  // brushed vertical grain
+  for (var i = 0; i < 64; i += 2){
+    x.fillStyle = (i & 2) ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.05)';
+    x.fillRect(i, 0, 1, 64);
+  }
+  // panel seams
+  for (var y = 0; y < 64; y += 16){
+    x.fillStyle = '#525f6c'; x.fillRect(0, y, 64, 1);
+    x.fillStyle = '#1f262d'; x.fillRect(0, y + 15, 64, 1);
+    x.fillStyle = 'rgba(0,0,0,0.25)'; x.fillRect(0, y + 14, 64, 1);
+  }
+  x.fillStyle = '#1f262d'; x.fillRect(31, 0, 2, 32);
+  x.fillStyle = 'rgba(255,255,255,0.08)'; x.fillRect(33, 0, 1, 32);
+  // rivets with highlight/shadow
+  for (y = 5; y < 64; y += 16){
+    for (i = 0; i < 4; i++){
+      var rx2 = [4, 24, 36, 57][i];
+      x.fillStyle = '#141a20'; x.fillRect(rx2, y + 1, 3, 3);
+      x.fillStyle = '#8aa4b2'; x.fillRect(rx2, y, 3, 3);
+      x.fillStyle = '#c2d6e0'; x.fillRect(rx2, y, 1, 1);
+    }
+  }
+  // vent grille on one panel
+  x.fillStyle = '#10151a'; x.fillRect(38, 18, 20, 11);
+  for (i = 0; i < 4; i++){
+    x.fillStyle = '#2c3842'; x.fillRect(39, 19 + i * 3, 18, 1);
+    x.fillStyle = '#05080b'; x.fillRect(39, 20 + i * 3, 18, 2);
+  }
+  x.fillStyle = 'rgba(0,0,0,0.3)'; x.fillRect(38, 29, 20, 2);
+  // hazard stripe band near the base
+  for (i = -1; i < 10; i++){
+    x.fillStyle = (i & 1) ? '#c9a23f' : '#16191d';
+    x.beginPath();
+    x.moveTo(i * 8, 56); x.lineTo(i * 8 + 4, 56);
+    x.lineTo(i * 8 + 10, 48); x.lineTo(i * 8 + 6, 48);
+    x.closePath(); x.fill();
+  }
+  x.fillStyle = 'rgba(0,0,0,0.35)'; x.fillRect(0, 48, 64, 1); x.fillRect(0, 55, 64, 1);
+  // scratches + grime
+  x.fillStyle = 'rgba(220,235,245,0.1)';
+  x.fillRect(8, 36, 11, 1); x.fillRect(46, 7, 8, 1);
+  speck(x, 80, 'rgba(0,0,0,0.18)', 2, 1);
+});
+
+var texDoor = makeTex(function(x){
+  // recessed tech door in a metal frame
+  x.fillStyle = '#242b33'; x.fillRect(0, 0, 64, 64);
+  x.fillStyle = '#39434e'; x.fillRect(0, 0, 6, 64); x.fillRect(58, 0, 6, 64);
+  x.fillStyle = '#525f6c'; x.fillRect(0, 0, 1, 64); x.fillRect(58, 0, 1, 64);
+  x.fillStyle = '#10151a'; x.fillRect(5, 0, 1, 64); x.fillRect(63, 0, 1, 64);
+  // frame rivets
+  x.fillStyle = '#8aa4b2';
+  for (var y = 4; y < 64; y += 12){ x.fillRect(2, y, 2, 2); x.fillRect(60, y, 2, 2); }
+  // door slab
+  x.fillStyle = '#17383a'; x.fillRect(6, 0, 52, 64);
+  x.fillStyle = '#2b6164'; x.fillRect(9, 3, 46, 58);
+  x.fillStyle = '#1f4b4e'; x.fillRect(12, 6, 40, 52);
+  // horizontal tech ribs
+  for (y = 10; y < 60; y += 10){
+    x.fillStyle = 'rgba(0,0,0,0.3)'; x.fillRect(12, y, 40, 1);
+    x.fillStyle = 'rgba(140,220,220,0.08)'; x.fillRect(12, y + 1, 40, 1);
+  }
+  // central seam with warning chevrons
+  x.fillStyle = '#0d2224'; x.fillRect(30, 3, 4, 58);
+  x.fillStyle = '#143537'; x.fillRect(31, 3, 2, 58);
+  x.fillStyle = '#c9a23f';
+  x.fillRect(27, 6, 3, 2); x.fillRect(34, 6, 3, 2);
+  x.fillRect(27, 56, 3, 2); x.fillRect(34, 56, 3, 2);
+  // status lamp + conduit
+  x.fillStyle = '#0a1416'; x.fillRect(44, 24, 9, 16);
+  x.fillStyle = '#6fe3b0'; x.fillRect(46, 26, 5, 4);
+  x.fillStyle = 'rgba(111,227,176,0.25)'; x.fillRect(45, 25, 7, 6);
+  x.fillStyle = '#cbb45e'; x.fillRect(46, 33, 5, 5);
+  x.fillStyle = '#8f7c37'; x.fillRect(47, 36, 3, 2);
+  x.fillStyle = '#0d2224'; x.fillRect(14, 30, 12, 2);
+  x.fillStyle = '#2f6d70'; x.fillRect(14, 29, 12, 1);
+  speck(x, 60, 'rgba(0,0,0,0.18)', 1, 1);
+});
+
+var texExit = makeTex(function(x){
+  x.fillStyle = '#101317'; x.fillRect(0, 0, 64, 64);
+  x.fillStyle = '#39434e';
+  x.fillRect(0, 0, 64, 5); x.fillRect(0, 59, 64, 5);
+  x.fillRect(0, 0, 5, 64); x.fillRect(59, 0, 5, 64);
+  x.fillStyle = '#525f6c'; x.fillRect(0, 0, 64, 1); x.fillRect(0, 0, 1, 64);
+  x.fillStyle = '#8aa4b2';
+  x.fillRect(2, 2, 2, 2); x.fillRect(60, 2, 2, 2);
+  x.fillRect(2, 60, 2, 2); x.fillRect(60, 60, 2, 2);
+  x.fillStyle = '#1b2026'; x.fillRect(8, 8, 48, 48);
+  x.fillStyle = '#12161b'; x.fillRect(10, 10, 44, 44);
+  // hazard ticks around the sign
+  x.fillStyle = '#c9a23f';
+  for (var i = 12; i < 52; i += 8){ x.fillRect(i, 8, 4, 2); x.fillRect(i, 54, 4, 2); }
+  x.shadowColor = '#6fe3b0'; x.shadowBlur = 9;
+  x.fillStyle = '#6fe3b0';
+  x.font = 'bold 15px "Courier New",monospace';
+  x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText('EXIT', 32, 25);
+  x.fillRect(29, 37, 6, 10);
+  x.beginPath(); x.moveTo(21, 47); x.lineTo(43, 47); x.lineTo(32, 58); x.closePath(); x.fill();
+  x.shadowBlur = 0;
+  x.fillStyle = 'rgba(111,227,176,0.1)'; x.fillRect(10, 10, 44, 44);
+});
+
+function lockedDoorTex(main, dark){
+  return makeTex(function(x){
+    x.drawImage(texDoor, 0, 0);
+    // keypad lock plate with colored lamp and key silhouette
+    x.fillStyle = '#0a1013'; x.fillRect(19, 19, 26, 27);
+    x.fillStyle = '#1c2a2c'; x.fillRect(20, 20, 24, 25);
+    x.fillStyle = 'rgba(255,255,255,0.08)'; x.fillRect(20, 20, 24, 1);
+    x.fillStyle = main; x.fillRect(22, 22, 20, 4);
+    x.fillStyle = 'rgba(0,0,0,0.25)'; x.fillRect(22, 24, 20, 2);
+    // key shape
+    x.fillStyle = main;
+    x.fillRect(25, 31, 6, 6); x.fillRect(31, 33, 10, 2);
+    x.fillRect(37, 35, 2, 3); x.fillRect(40, 35, 2, 4);
+    x.fillStyle = dark; x.fillRect(27, 33, 2, 2);
+    x.fillStyle = dark;
+    x.fillRect(24, 41, 4, 2); x.fillRect(30, 41, 4, 2); x.fillRect(36, 41, 4, 2);
+  });
+}
+var texDoorGold = lockedDoorTex('#e8c23a', '#8f7c37');
+var texDoorSilver = lockedDoorTex('#c8ccd4', '#767c88');
+
+function secretTex(src){
+  return makeTex(function(x){
+    x.drawImage(src, 0, 0);
+    // artful tell: branching fracture, settled dust, displaced slab edge
+    x.strokeStyle = 'rgba(8,6,10,0.55)'; x.lineWidth = 1;
+    x.beginPath();
+    x.moveTo(49, 0); x.lineTo(46, 9); x.lineTo(50, 17); x.lineTo(44, 26);
+    x.lineTo(47, 38); x.lineTo(42, 49); x.lineTo(46, 58); x.lineTo(44, 64);
+    x.moveTo(46, 9); x.lineTo(40, 13);
+    x.moveTo(44, 26); x.lineTo(51, 31);
+    x.moveTo(42, 49); x.lineTo(36, 53);
+    x.stroke();
+    x.strokeStyle = 'rgba(255,245,230,0.1)';
+    x.beginPath();
+    x.moveTo(50, 1); x.lineTo(47, 9); x.moveTo(48, 38); x.lineTo(43, 49);
+    x.stroke();
+    // hairline gap along one edge of the loose slab
+    x.fillStyle = 'rgba(0,0,0,0.35)'; x.fillRect(56, 2, 1, 60);
+    // dust and rubble at the base
+    x.fillStyle = 'rgba(24,20,18,0.6)';
+    x.fillRect(40, 61, 10, 2); x.fillRect(44, 59, 4, 2);
+    x.fillStyle = 'rgba(120,110,100,0.35)';
+    x.fillRect(42, 60, 2, 1); x.fillRect(47, 61, 2, 1);
+  });
+}
+
+var TXW = { 1: pair(texBrick), 2: pair(texStone), 3: pair(texMetal) };
+var TXP = { 4: pair(secretTex(texBrick)), 5: pair(secretTex(texStone)), 6: pair(secretTex(texMetal)) };
+var TXD = pair(texDoor);
+var TXG = pair(texDoorGold);
+var TXS = pair(texDoorSilver);
+var TXX = pair(texExit);
+
+// background (ceiling + floor fill) - baked once; suggests panelled ceiling
+// and worn flagstone floor receding into cool fog at the horizon
+var bg = (function(){
+  var c = document.createElement('canvas'); c.width = W; c.height = H;
+  var x = c.getContext('2d'), gr, i, y;
+  // ceiling: cool blue-black falling to fog
+  gr = x.createLinearGradient(0, 0, 0, H / 2);
+  gr.addColorStop(0, '#2c313c'); gr.addColorStop(0.75, '#141822'); gr.addColorStop(1, '#0c0f18');
+  x.fillStyle = gr; x.fillRect(0, 0, W, H / 2);
+  // perspective panel seams, denser toward the horizon
+  for (i = 1; i < 14; i++){
+    y = Math.round(H / 2 - (H * 0.52) / i);
+    if (y < 0) continue;
+    var fade = Math.max(0.03, 0.17 - i * 0.012);
+    x.fillStyle = 'rgba(0,0,0,' + fade.toFixed(3) + ')';
+    x.fillRect(0, y, W, 1);
+    x.fillStyle = 'rgba(160,180,220,' + (fade * 0.4).toFixed(3) + ')';
+    x.fillRect(0, y + 1, W, 1);
+  }
+  // faint cool light panels overhead
+  for (i = 0; i < 6; i++){
+    var px0 = 20 + i * 54, pw = 26 - i * 2;
+    x.fillStyle = 'rgba(140,170,220,0.05)';
+    x.fillRect(px0, 4 + i * 2, pw, 10);
+  }
+  // ceiling grain
+  for (i = 0; i < 260; i++){
+    y = (Math.random() * (H / 2)) | 0;
+    x.fillStyle = (i & 1) ? 'rgba(0,0,0,0.1)' : 'rgba(170,190,230,0.04)';
+    x.fillRect((Math.random() * W) | 0, y, 2, 1);
+  }
+  // floor: warm worn stone falling away into the same cool fog
+  gr = x.createLinearGradient(0, H / 2, 0, H);
+  gr.addColorStop(0, '#0d1018'); gr.addColorStop(0.3, '#1a1712'); gr.addColorStop(1, '#4a4034');
+  x.fillStyle = gr; x.fillRect(0, H / 2, W, H / 2);
+  // perspective noise bands suggesting flagstone rows
+  for (i = 1; i < 16; i++){
+    y = Math.round(H / 2 + (H * 0.52) / i);
+    if (y >= H) continue;
+    var a = Math.max(0.03, 0.2 - i * 0.013);
+    x.fillStyle = 'rgba(0,0,0,' + a.toFixed(3) + ')';
+    x.fillRect(0, y, W, 1);
+    x.fillStyle = 'rgba(220,190,150,' + (a * 0.3).toFixed(3) + ')';
+    x.fillRect(0, y + 1, W, 1);
+  }
+  // floor grain + occasional stains
+  for (i = 0; i < 340; i++){
+    y = H / 2 + ((Math.random() * (H / 2)) | 0);
+    var deep = (y - H / 2) / (H / 2);
+    x.fillStyle = (i & 1) ? 'rgba(0,0,0,' + (0.06 + deep * 0.1).toFixed(3) + ')'
+                          : 'rgba(210,180,140,' + (deep * 0.05).toFixed(3) + ')';
+    x.fillRect((Math.random() * W) | 0, y, 1 + ((Math.random() * 3) | 0), 1);
+  }
+  // horizon fog glow band
+  gr = x.createLinearGradient(0, H / 2 - 9, 0, H / 2 + 9);
+  gr.addColorStop(0, 'rgba(16,22,38,0)');
+  gr.addColorStop(0.5, 'rgba(22,30,52,0.55)');
+  gr.addColorStop(1, 'rgba(16,22,38,0)');
+  x.fillStyle = gr; x.fillRect(0, H / 2 - 9, W, 18);
+  return c;
+})();
+
+// ============================================================= SPRITES
+function makeSprite(fn){
+  var c = document.createElement('canvas'); c.width = TEX; c.height = TEX;
+  fn(c.getContext('2d')); return c;
+}
+// soft baked halo behind pickups so they read in dark corridors
+function haloBase(x, col, r){
+  var gr = x.createRadialGradient(32, 45, 2, 32, 45, r || 21);
+  gr.addColorStop(0, col);
+  gr.addColorStop(1, 'rgba(0,0,0,0)');
+  x.fillStyle = gr;
+  x.beginPath(); x.arc(32, 45, r || 21, 0, 7); x.fill();
+}
+function guardBody(x, legL, legR, pose){
+  var uni = '#4a6a44', uniD = '#324a2e', uniS = '#5a7c52',
+      skin = '#cfa379', skinD = '#a87f5c',
+      helm = '#2b3d29', helmL = '#3c5438',
+      boot = '#1a1a1a', gun = '#15161a', gunL = '#2c2e36',
+      armor = '#3a523a', belt = '#241f14';
+  // --- legs (trousers, knee shade, boots)
+  x.fillStyle = uniD;
+  x.fillRect(25 + legL, 44, 6, 14); x.fillRect(33 + legR, 44, 6, 14);
+  x.fillStyle = 'rgba(0,0,0,0.3)';
+  x.fillRect(29 + legL, 44, 2, 14); x.fillRect(33 + legR, 44, 2, 14);
+  x.fillStyle = uni;
+  x.fillRect(25 + legL, 44, 2, 7); x.fillRect(35 + legR, 44, 2, 7);
+  x.fillStyle = boot;
+  x.fillRect(24 + legL, 56, 8, 5); x.fillRect(32 + legR, 56, 8, 5);
+  x.fillStyle = '#34343a';
+  x.fillRect(24 + legL, 56, 8, 1); x.fillRect(32 + legR, 56, 8, 1);
+  // --- torso: tunic with chest armor plate, strap and belt
+  x.fillStyle = uni; x.fillRect(21, 26, 22, 19);
+  x.fillStyle = uniS; x.fillRect(21, 26, 3, 17);          // lit side
+  x.fillStyle = 'rgba(0,0,0,0.28)'; x.fillRect(39, 26, 4, 19); // shadow side
+  x.fillStyle = armor; x.fillRect(25, 28, 14, 12);
+  x.fillStyle = 'rgba(255,255,255,0.09)'; x.fillRect(25, 28, 14, 2);
+  x.fillStyle = 'rgba(0,0,0,0.25)'; x.fillRect(31, 28, 2, 12);
+  // shoulder pads
+  x.fillStyle = helmL; x.fillRect(19, 25, 7, 5); x.fillRect(38, 25, 7, 5);
+  x.fillStyle = 'rgba(0,0,0,0.3)'; x.fillRect(19, 28, 7, 2); x.fillRect(38, 28, 7, 2);
+  // belt + buckle + pouch
+  x.fillStyle = belt; x.fillRect(21, 41, 22, 3);
+  x.fillStyle = '#9a8340'; x.fillRect(30, 41, 4, 3);
+  x.fillStyle = '#2e2718'; x.fillRect(37, 42, 5, 4);
+  if (pose === 'walk'){
+    // arms swing with rifle carried at port
+    x.fillStyle = uni; x.fillRect(16, 27, 5, 12); x.fillRect(43, 27, 5, 12);
+    x.fillStyle = uniD; x.fillRect(16, 35, 5, 4); x.fillRect(43, 35, 5, 4);
+    x.fillStyle = gun; x.fillRect(14, 36, 36, 4);
+    x.fillStyle = gunL; x.fillRect(14, 36, 36, 1);
+    x.fillStyle = '#4a3420'; x.fillRect(40, 35, 8, 6);   // stock
+    x.fillStyle = gun; x.fillRect(12, 37, 3, 2);         // muzzle
+    x.fillStyle = skin; x.fillRect(18, 37, 4, 3); x.fillRect(41, 37, 4, 3);
+  } else {
+    // aiming straight at the viewer: elbows out, barrel center-on
+    x.fillStyle = uni; x.fillRect(17, 28, 8, 8); x.fillRect(39, 28, 8, 8);
+    x.fillStyle = uniD; x.fillRect(17, 34, 8, 2); x.fillRect(39, 34, 8, 2);
+    x.fillStyle = skin; x.fillRect(25, 33, 6, 4); x.fillRect(33, 33, 6, 4);
+    x.fillStyle = gun; x.fillRect(28, 28, 8, 9);
+    x.fillStyle = gunL; x.fillRect(29, 29, 2, 7);
+    x.fillStyle = '#000'; x.fillRect(30, 30, 4, 4);      // bore, dead-on
+    x.fillStyle = '#3c3e46'; x.fillRect(31, 31, 2, 2);
+  }
+  // --- head: face, eyes, chin shadow under helmet
+  x.fillStyle = skin; x.fillRect(26, 13, 12, 11);
+  x.fillStyle = skinD; x.fillRect(26, 21, 12, 3);
+  x.fillStyle = '#1b1b1b'; x.fillRect(28, 17, 3, 2); x.fillRect(33, 17, 3, 2);
+  x.fillStyle = skinD; x.fillRect(31, 19, 2, 2);
+  // helmet: dome, rim highlight, cheek guards, chin strap
+  x.fillStyle = helm; x.fillRect(24, 7, 16, 8);
+  x.fillStyle = helmL; x.fillRect(25, 7, 14, 2);
+  x.fillStyle = helm; x.fillRect(23, 13, 4, 6); x.fillRect(37, 13, 4, 6);
+  x.fillStyle = 'rgba(0,0,0,0.35)'; x.fillRect(24, 14, 16, 1);
+  x.fillStyle = '#1e2c1c'; x.fillRect(27, 23, 10, 1);
+}
+function muzzleStar(x, cx, cy, r){
+  var gr = x.createRadialGradient(cx, cy, 1, cx, cy, r * 2);
+  gr.addColorStop(0, 'rgba(255,240,170,0.9)');
+  gr.addColorStop(0.4, 'rgba(255,170,50,0.5)');
+  gr.addColorStop(1, 'rgba(255,120,20,0)');
+  x.fillStyle = gr;
+  x.beginPath(); x.arc(cx, cy, r * 2, 0, 7); x.fill();
+  x.fillStyle = '#ffb53a';
+  x.fillRect(cx - 2, cy - r - 4, 4, r * 2 + 8);
+  x.fillRect(cx - r - 4, cy - 2, r * 2 + 8, 4);
+  x.fillRect(cx - r + 1, cy - r + 1, 3, 3); x.fillRect(cx + r - 4, cy + r - 4, 3, 3);
+  x.fillRect(cx + r - 4, cy - r + 1, 3, 3); x.fillRect(cx - r + 1, cy + r - 4, 3, 3);
+  x.fillStyle = '#fff3b0';
+  x.beginPath(); x.arc(cx, cy, r - 2, 0, 7); x.fill();
+}
+var SPR = {
+  walk1: makeSprite(function(x){ guardBody(x, 0, 0, 'walk'); }),
+  walk2: makeSprite(function(x){ guardBody(x, -3, 3, 'walk'); }),
+  aim:   makeSprite(function(x){ guardBody(x, 0, 0, 'aim'); }),
+  fire:  makeSprite(function(x){
+    guardBody(x, 0, 0, 'aim');
+    muzzleStar(x, 32, 31, 8);
+  }),
+  die: makeSprite(function(x){
+    x.translate(32, 44); x.rotate(0.85); x.translate(-32, -42);
+    guardBody(x, 3, -3, 'walk');
+    x.fillStyle = '#9c2020';
+    x.fillRect(26, 29, 7, 6); x.fillRect(31, 34, 4, 4);
+    x.fillStyle = '#c03434'; x.fillRect(27, 30, 3, 3);
+  }),
+  dead: makeSprite(function(x){
+    // corpse on its side in a dark pool
+    x.fillStyle = 'rgba(52,10,10,0.9)';
+    x.beginPath(); x.ellipse(32, 58, 23, 5, 0, 0, 7); x.fill();
+    x.fillStyle = 'rgba(84,16,16,0.85)';
+    x.beginPath(); x.ellipse(31, 57, 17, 3.5, 0, 0, 7); x.fill();
+    x.fillStyle = 'rgba(52,10,10,0.8)';
+    x.fillRect(49, 55, 6, 2); x.fillRect(12, 59, 5, 2);
+    // torso with armor plate
+    x.fillStyle = '#324a2e'; x.fillRect(16, 50, 26, 8);
+    x.fillStyle = '#3a523a'; x.fillRect(20, 51, 14, 6);
+    x.fillStyle = 'rgba(0,0,0,0.3)'; x.fillRect(16, 55, 26, 3);
+    // helmet head fallen back
+    x.fillStyle = '#2b3d29'; x.fillRect(42, 48, 10, 9);
+    x.fillStyle = '#3c5438'; x.fillRect(42, 48, 10, 2);
+    x.fillStyle = '#cfa379'; x.fillRect(41, 52, 4, 4);
+    // outflung arm and boots
+    x.fillStyle = '#4a6a44'; x.fillRect(22, 46, 10, 4);
+    x.fillStyle = '#cfa379'; x.fillRect(19, 46, 4, 3);
+    x.fillStyle = '#1a1a1a'; x.fillRect(8, 50, 8, 3); x.fillRect(8, 55, 8, 3);
+    // dropped rifle
+    x.fillStyle = '#15161a'; x.fillRect(20, 61, 22, 2);
+    x.fillStyle = '#4a3420'; x.fillRect(38, 60, 6, 3);
+  }),
+  med: makeSprite(function(x){
+    haloBase(x, 'rgba(255,120,120,0.22)');
+    x.fillStyle = '#2a2a28'; x.fillRect(15, 35, 34, 24);
+    x.fillStyle = '#e4e4da'; x.fillRect(16, 36, 32, 22);
+    x.fillStyle = '#f4f4ec'; x.fillRect(16, 36, 32, 3);
+    x.fillStyle = '#b0b0a6'; x.fillRect(16, 52, 32, 6);
+    x.fillStyle = '#8a8a80'; x.fillRect(16, 45, 32, 1);  // lid seam
+    x.fillStyle = '#54544c'; x.fillRect(28, 34, 8, 3);   // handle
+    x.fillStyle = '#c23030'; x.fillRect(28, 39, 8, 15); x.fillRect(22, 43, 20, 7);
+    x.fillStyle = '#e05050'; x.fillRect(29, 40, 2, 13); x.fillRect(23, 44, 2, 5);
+  }),
+  amm: makeSprite(function(x){
+    haloBase(x, 'rgba(255,200,90,0.18)');
+    x.fillStyle = '#c9a23f';
+    x.fillRect(21, 29, 4, 9); x.fillRect(27, 29, 4, 9); x.fillRect(33, 29, 4, 9); x.fillRect(39, 29, 4, 9);
+    x.fillStyle = '#ffe9a3';
+    x.fillRect(21, 29, 1, 9); x.fillRect(27, 29, 1, 9); x.fillRect(33, 29, 1, 9); x.fillRect(39, 29, 1, 9);
+    x.fillStyle = '#8a6e2a';
+    x.fillRect(21, 28, 4, 2); x.fillRect(27, 28, 4, 2); x.fillRect(33, 28, 4, 2); x.fillRect(39, 28, 4, 2);
+    x.fillStyle = '#2a241a'; x.fillRect(17, 37, 30, 22);
+    x.fillStyle = '#6b5a33'; x.fillRect(18, 38, 28, 20);
+    x.fillStyle = '#7d6a3e'; x.fillRect(16, 36, 32, 7);
+    x.fillStyle = '#95814e'; x.fillRect(16, 36, 32, 1);
+    x.fillStyle = '#241f14'; x.fillRect(18, 48, 28, 2);
+    x.fillStyle = '#3c3326'; x.fillRect(29, 51, 6, 4);   // clasp
+  }),
+  sgun: makeSprite(function(x){
+    haloBase(x, 'rgba(160,210,255,0.16)');
+    x.save();
+    x.translate(32, 44); x.rotate(-0.3); x.translate(-32, -44);
+    x.fillStyle = '#101214'; x.fillRect(4, 38, 3, 7);
+    x.fillStyle = '#23262b'; x.fillRect(6, 38, 36, 4);
+    x.fillStyle = '#3e434c'; x.fillRect(6, 38, 36, 1);   // barrel sheen
+    x.fillStyle = '#34383f'; x.fillRect(6, 42, 36, 3);
+    x.fillStyle = '#15171a'; x.fillRect(10, 39, 2, 2); x.fillRect(16, 39, 2, 2); x.fillRect(22, 39, 2, 2);
+    x.fillStyle = '#6b4526'; x.fillRect(42, 36, 15, 11);
+    x.fillStyle = '#8a5c34'; x.fillRect(42, 36, 15, 2);
+    x.fillStyle = '#50331c'; x.fillRect(26, 45, 12, 5);  // pump
+    x.fillStyle = '#6b4526'; x.fillRect(26, 45, 12, 1);
+    x.restore();
+  }),
+  shell: makeSprite(function(x){
+    haloBase(x, 'rgba(255,140,90,0.16)');
+    x.fillStyle = '#b84040';
+    x.fillRect(23, 35, 5, 11); x.fillRect(30, 35, 5, 11); x.fillRect(37, 35, 5, 11);
+    x.fillStyle = '#d86060';
+    x.fillRect(23, 35, 1, 11); x.fillRect(30, 35, 1, 11); x.fillRect(37, 35, 1, 11);
+    x.fillStyle = '#c9a23f';
+    x.fillRect(23, 43, 5, 3); x.fillRect(30, 43, 5, 3); x.fillRect(37, 43, 5, 3);
+    x.fillStyle = '#2a241a'; x.fillRect(19, 45, 26, 14);
+    x.fillStyle = '#7a3030'; x.fillRect(20, 46, 24, 12);
+    x.fillStyle = '#944040'; x.fillRect(20, 46, 24, 2);
+    x.fillStyle = '#4e1f1f'; x.fillRect(20, 54, 24, 2);
+  })
+};
+function keySpr(main, dark, lite, sparkle){
+  return makeSprite(function(x){
+    haloBase(x, sparkle ? 'rgba(255,240,180,0.3)' : 'rgba(255,230,150,0.2)', 20);
+    // bow (ring) with inner cutout
+    x.strokeStyle = main; x.lineWidth = 5;
+    x.beginPath(); x.arc(22, 45, 7, 0, 7); x.stroke();
+    x.strokeStyle = lite; x.lineWidth = 2;
+    x.beginPath(); x.arc(21, 43, 7, 3.4, 4.9); x.stroke();
+    // shaft and wards
+    x.fillStyle = main;
+    x.fillRect(29, 43, 18, 5);
+    x.fillRect(39, 46, 4, 7);
+    x.fillRect(45, 46, 3, 6);
+    x.fillStyle = lite; x.fillRect(29, 43, 18, 1);
+    x.fillStyle = dark; x.fillRect(29, 46, 18, 2);
+    if (sparkle){
+      x.fillStyle = '#fffbe8';
+      x.fillRect(24, 36, 2, 8); x.fillRect(21, 39, 8, 2);   // four-point glint
+      x.fillRect(44, 42, 1, 4); x.fillRect(42, 44, 5, 1);
+      x.fillRect(33, 50, 1, 3); x.fillRect(32, 51, 3, 1);
+    }
+  });
+}
+SPR.keyGold = keySpr('#e8c23a', '#8f7c37', '#fff0b0', false);
+SPR.keyGoldS = keySpr('#e8c23a', '#8f7c37', '#fff0b0', true);
+SPR.keySilver = keySpr('#c8ccd4', '#767c88', '#f4f7ff', false);
+SPR.keySilverS = keySpr('#c8ccd4', '#767c88', '#f4f7ff', true);
+
+// ============================================================= AUDIO
+var AC = null, MG = null, muted = false;
+var volume = 0.7;
+try {
+  var vs0 = parseFloat(localStorage.getItem('arcade_volume'));
+  if (isFinite(vs0)) volume = Math.min(1, Math.max(0, vs0));
+} catch (e) {}
+function ac(){
+  if (!AC){
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    MG = AC.createGain();
+    MG.gain.value = volume;
+    MG.connect(AC.destination);
+  }
+  if (AC.state === 'suspended') AC.resume();
+  return AC;
+}
+function setVolume(v){
+  volume = Math.min(1, Math.max(0, v));
+  if (MG) MG.gain.value = volume;
+  try { localStorage.setItem('arcade_volume', String(volume)); } catch (e) {}
+}
+function tone(f0, f1, dur, type, vol, when){
+  if (muted) return;
+  try {
+    var c = ac(), o = c.createOscillator(), gn = c.createGain();
+    var t = c.currentTime + (when || 0);
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+    gn.gain.setValueAtTime(vol, t);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(gn); gn.connect(MG);
+    o.start(t); o.stop(t + dur + 0.02);
+  } catch (e) {}
+}
+function noiseB(dur, vol, fq, when){
+  if (muted) return;
+  try {
+    var c = ac(), n = c.createBufferSource();
+    var b = c.createBuffer(1, Math.max(1, (c.sampleRate * dur) | 0), c.sampleRate);
+    var d = b.getChannelData(0);
+    for (var i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    n.buffer = b;
+    var f = c.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = fq; f.Q.value = 0.8;
+    var gn = c.createGain(); gn.gain.value = vol;
+    n.connect(f); f.connect(gn); gn.connect(MG);
+    n.start(c.currentTime + (when || 0));
+  } catch (e) {}
+}
+var SND = {
+  shot:   function(){ noiseB(0.14, 0.5, 1900); tone(420, 70, 0.13, 'square', 0.22); },
+  sshot:  function(){ noiseB(0.3, 0.8, 700); noiseB(0.16, 0.5, 2300); tone(150, 36, 0.26, 'sawtooth', 0.3); },
+  locked: function(){ tone(170, 120, 0.09, 'square', 0.2); tone(115, 80, 0.12, 'square', 0.18, 0.1); },
+  secret: function(){ noiseB(0.5, 0.35, 180); tone(70, 45, 0.5, 'sawtooth', 0.22); },
+  eshot:  function(){ noiseB(0.2, 0.4, 850); tone(240, 55, 0.18, 'square', 0.18); },
+  click:  function(){ tone(900, 480, 0.05, 'square', 0.12); },
+  pickup: function(){ tone(520, 880, 0.09, 'square', 0.16); tone(780, 1240, 0.1, 'square', 0.13, 0.07); },
+  door:   function(){ tone(85, 230, 0.35, 'sawtooth', 0.18); noiseB(0.3, 0.12, 420); },
+  hurt:   function(){ tone(210, 85, 0.22, 'sawtooth', 0.26); },
+  die:    function(){ tone(300, 38, 0.9, 'sawtooth', 0.3); noiseB(0.5, 0.2, 250); },
+  edie:   function(){ tone(170, 48, 0.5, 'square', 0.22); noiseB(0.3, 0.25, 480); },
+  alert:  function(){ tone(330, 540, 0.12, 'square', 0.15); },
+  win:    function(){
+    tone(392, 392, 0.12, 'square', 0.18);
+    tone(523, 523, 0.12, 'square', 0.18, 0.12);
+    tone(659, 659, 0.12, 'square', 0.18, 0.24);
+    tone(784, 784, 0.3, 'square', 0.2, 0.36);
+  }
+};
+
+// ============================================================= STATE
+var state = 'title';          // title | playing | levelend | gameover | win
+var li = 0;                   // level index
+var GW = 0, GH = 0;
+var grid = null, explored = null;
+var doors = new Map();
+var enemies = [], items = [];
+var kills = 0, totalEnemies = 0, totalKills = 0;
+var zbuf = new Float64Array(W);
+var RES_STEPS = [[320, 200], [480, 300], [640, 400]];
+var resIdx = 0;
+(function(){
+  var saved = parseInt(arcade.store.get('rc_res'), 10);
+  if (saved >= 0 && saved < RES_STEPS.length) resIdx = saved;
+  if (resIdx) applyRes();
+})();
+function applyRes(){
+  W = RES_STEPS[resIdx][0]; H = RES_STEPS[resIdx][1];
+  cv.width = W; cv.height = H;
+  g.imageSmoothingEnabled = false;
+  zbuf = new Float64Array(W);
+  fit();
+}
+function cycleRes(){
+  resIdx = (resIdx + 1) % RES_STEPS.length;
+  arcade.store.set('rc_res', resIdx);
+  applyRes();
+}
+var p = { x: 2, y: 2, dx: 1, dy: 0, plx: 0, ply: 0.66, hp: 100, ammo: 24,
+          shells: 0, hasShotgun: false, weapon: 0, keyGold: false, keySilver: false };
+var fireCool = 0, recoil = 0, flashT = 0, hurtT = 0, hurtFrom = 0;
+var bob = 0, mv = 0;
+var nowT = 0;                 // seconds, for purely visual animation
+var parts = [];               // ejected shell casings (screen-space, visual only)
+var lightMap = null, flickMap = null, flickVal = 1;
+var noteT = 0;
+var mmOn = false;
+var lastBlock = null;
+var paused = false;
+var secretsTotal = 0, secretsFound = 0, totalSecrets = 0;
+var pushes = [];
+var lockMsgT = 0;
+var touchFire = false, tMoveF = 0, tMoveS = 0;
+function isDoorTile(t){ return t === 8 || t === 10 || t === 11; }
+
+function saveBest(n){
+  try {
+    var b = parseInt(localStorage.getItem('rc_best_level') || '0', 10) || 0;
+    if (n > b) localStorage.setItem('rc_best_level', String(n));
+  } catch (e) {}
+}
+
+function tileAt(x, y){
+  if (x < 0 || y < 0 || x >= GW || y >= GH) return 1;
+  return grid[y * GW + x];
+}
+function doorAt(x, y){ return doors.get(y * GW + x); }
+
+function loadLevel(i){
+  li = i;
+  var rows = MAPS[i].m;
+  GH = rows.length;
+  GW = 0;
+  for (var r = 0; r < GH; r++) if (rows[r].length > GW) GW = rows[r].length;
+  grid = new Uint8Array(GW * GH);
+  explored = new Uint8Array(GW * GH);
+  doors = new Map(); enemies = []; items = []; parts = [];
+  kills = 0;
+  secretsTotal = 0; secretsFound = 0; pushes = [];
+  p.keyGold = false; p.keySilver = false;
+  for (var y = 0; y < GH; y++){
+    var row = rows[y];
+    for (var x = 0; x < GW; x++){
+      var ch = x < row.length ? row[x] : '1';
+      var t = 0;
+      if (ch === '1') t = 1;
+      else if (ch === '2') t = 2;
+      else if (ch === '3') t = 3;
+      else if (ch === '4' || ch === '5' || ch === '6'){ t = ch.charCodeAt(0) - 48; secretsTotal++; }
+      else if (ch === 'D'){ t = 8; doors.set(y * GW + x, { open: 0, opening: false, lock: null }); }
+      else if (ch === 'G'){ t = 10; doors.set(y * GW + x, { open: 0, opening: false, lock: 'gold' }); }
+      else if (ch === 'S'){ t = 11; doors.set(y * GW + x, { open: 0, opening: false, lock: 'silver' }); }
+      else if (ch === 'X') t = 9;
+      else if (ch === 'P'){ p.x = x + 0.5; p.y = y + 0.5; }
+      else if (ch === 'g') enemies.push({ x: x + 0.5, y: y + 0.5, hp: 2, state: 'idle', t: 0, cool: 1, animT: Math.random() * 9 });
+      else if (ch === 'h') items.push({ x: x + 0.5, y: y + 0.5, kind: 'h', taken: false });
+      else if (ch === 'a') items.push({ x: x + 0.5, y: y + 0.5, kind: 'a', taken: false });
+      else if (ch === 'k') items.push({ x: x + 0.5, y: y + 0.5, kind: 'k', taken: false });
+      else if (ch === 's') items.push({ x: x + 0.5, y: y + 0.5, kind: 's', taken: false });
+      else if (ch === 'w') items.push({ x: x + 0.5, y: y + 0.5, kind: 'w', taken: false });
+      else if (ch === 'c') items.push({ x: x + 0.5, y: y + 0.5, kind: 'c', taken: false });
+      grid[y * GW + x] = t;
+    }
+  }
+  totalEnemies = enemies.length;
+  // baked sector lighting: deterministic per tile, some corridors run dim,
+  // a few zones carry a failing fixture that flickers (visual only)
+  lightMap = new Float32Array(GW * GH);
+  flickMap = new Uint8Array(GW * GH);
+  for (y = 0; y < GH; y++){
+    for (x = 0; x < GW; x++){
+      var hsh = ((x * 73856093) ^ (y * 19349663) ^ ((i + 1) * 83492791)) >>> 0;
+      var lt = 1;
+      if (hsh % 7 === 0) lt = 0.8;
+      if (hsh % 13 === 0) lt = 0.62;
+      if (hsh % 23 === 0){ lt = 0.72; flickMap[y * GW + x] = 1; }
+      lightMap[y * GW + x] = lt;
+    }
+  }
+  p.dx = 1; p.dy = 0; p.plx = 0; p.ply = 0.66;
+  mm.width = GW * 5; mm.height = GH * 5;
+  mm.style.width = (GW * 10) + 'px';
+}
+
+function startLevel(i){
+  loadLevel(i);
+  if (p.ammo < 16) p.ammo = 16;
+  if (p.hasShotgun && p.shells < 4) p.shells = 4;
+  paused = false;
+  state = 'playing';
+  ov.style.display = 'none';
+  saveBest(i + 1);
+  note('FLOOR ' + (i + 1) + ' - ' + MAPS[i].name);
+}
+function newGame(){
+  p.hp = 100; p.ammo = 24; totalKills = 0;
+  p.shells = 0; p.hasShotgun = false; p.weapon = 0;
+  totalSecrets = 0;
+  startLevel(0);
+}
+function note(s){ noteEl.textContent = s; noteT = 2.2; }
+
+// ============================================================= SCREENS
+function unlock(){ if (document.exitPointerLock) document.exitPointerLock(); }
+function showTitle(){
+  state = 'title'; unlock();
+  ov.innerHTML =
+    '<div><h1>CASTLE RAYCAST</h1>' +
+    '<h2>A WOLFENSTEIN-STYLE RAYCASTER</h2>' +
+    '<div class="ctl">' +
+    '<b>W A S D</b> MOVE / STRAFE<br>' +
+    '<b>ARROWS</b> TURN / MOVE<br>' +
+    '<b>MOUSE (CLICK TO LOCK)</b> LOOK<br>' +
+    '<b>SPACE / CLICK</b> SHOOT<br>' +
+    '<b>E</b> DOORS / EXIT / PUSH WALLS<br>' +
+    '<b>1 / 2 / Q</b> SWITCH WEAPON<br>' +
+    '<b>TAB</b> MINIMAP<br>' +
+    '<b>P</b> PAUSE<br>' +
+    '<b>M</b> MUTE</div><br>' +
+    '<div class="vol">VOLUME <input type="range" id="volsl" min="0" max="100" value="' +
+    Math.round(volume * 100) + '"></div>' +
+    '<span class="go">CLICK OR PRESS ENTER TO START</span></div>';
+  ov.style.display = 'flex';
+  var sl = document.getElementById('volsl');
+  function stop(ev){ ev.stopPropagation(); }
+  sl.addEventListener('click', stop);
+  sl.addEventListener('mousedown', stop);
+  sl.addEventListener('touchstart', stop, { passive: true });
+  sl.addEventListener('input', function(){ setVolume(sl.value / 100); });
+  sl.addEventListener('change', function(){ SND.pickup(); });
+}
+function showLevelEnd(){
+  state = 'levelend'; unlock(); SND.win();
+  totalKills += kills;
+  totalSecrets += secretsFound;
+  ov.innerHTML =
+    '<div><h1>FLOOR ' + (li + 1) + ' CLEARED</h1>' +
+    '<h2>' + MAPS[li].name + '</h2>' +
+    '<div class="stats">' +
+    '<div class="row"><span>KILLS</span><em>' + kills + ' / ' + totalEnemies + '</em></div>' +
+    '<div class="row"><span>SECRETS</span><em>' + secretsFound + ' / ' + secretsTotal + '</em></div>' +
+    '<div class="row"><span>HEALTH</span><em>' + p.hp + '</em></div>' +
+    '<div class="row"><span>AMMO</span><em>' + p.ammo + '</em></div>' +
+    (p.hasShotgun ? '<div class="row"><span>SHELLS</span><em>' + p.shells + '</em></div>' : '') +
+    '</div><br>' +
+    '<span class="go">PRESS ENTER FOR FLOOR ' + (li + 2) + '</span></div>';
+  ov.style.display = 'flex';
+}
+function showGameOver(){
+  state = 'gameover'; unlock(); SND.die();
+  ov.innerHTML =
+    '<div><h1>YOU DIED</h1>' +
+    '<h2>THE GUARDS PREVAIL ON FLOOR ' + (li + 1) + '</h2>' +
+    '<span class="go">PRESS ENTER TO RETRY THIS FLOOR</span></div>';
+  ov.style.display = 'flex';
+}
+function showWin(){
+  state = 'win'; unlock(); SND.win();
+  totalKills += kills;
+  totalSecrets += secretsFound;
+  saveBest(MAPS.length);
+  ov.innerHTML =
+    '<div><h1>YOU ESCAPED</h1>' +
+    '<h2>ALL ' + MAPS.length + ' FLOORS CLEARED</h2>' +
+    '<div class="stats">' +
+    '<div class="row"><span>TOTAL KILLS</span><em>' + totalKills + '</em></div>' +
+    '<div class="row"><span>SECRETS FOUND</span><em>' + totalSecrets + '</em></div>' +
+    '<div class="row"><span>HEALTH LEFT</span><em>' + p.hp + '</em></div>' +
+    '</div><br>' +
+    '<span class="go">PRESS ENTER FOR TITLE</span></div>';
+  ov.style.display = 'flex';
+}
+function advance(){
+  if (state === 'title') newGame();
+  else if (state === 'levelend'){
+    if (li + 1 < MAPS.length) startLevel(li + 1); else showWin();
+  }
+  else if (state === 'gameover'){ p.hp = 100; p.ammo = 24; startLevel(li); }
+  else if (state === 'win') showTitle();
+}
+ov.addEventListener('click', function(){ advance(); });
+
+function completeLevel(){
+  if (state !== 'playing') return;
+  if (li + 1 >= MAPS.length) showWin(); else showLevelEnd();
+}
+
+// ============================================================= COLLISION
+function canMove(x, y){
+  var r = 0.22;
+  for (var tx = Math.floor(x - r); tx <= Math.floor(x + r); tx++){
+    for (var ty = Math.floor(y - r); ty <= Math.floor(y + r); ty++){
+      var t = tileAt(tx, ty);
+      if (t === 0) continue;
+      if (isDoorTile(t)){ var d = doorAt(tx, ty); if (d && d.open >= 0.9) continue; }
+      lastBlock = { x: tx, y: ty, t: t };
+      return false;
+    }
+  }
+  return true;
+}
+function canMoveEnt(x, y, self){
+  var r = 0.28;
+  for (var tx = Math.floor(x - r); tx <= Math.floor(x + r); tx++){
+    for (var ty = Math.floor(y - r); ty <= Math.floor(y + r); ty++){
+      var t = tileAt(tx, ty);
+      if (t === 0) continue;
+      if (isDoorTile(t)){ var d = doorAt(tx, ty); if (d && d.open >= 0.9) continue; }
+      return false;
+    }
+  }
+  for (var i = 0; i < enemies.length; i++){
+    var o = enemies[i];
+    if (o === self || o.state === 'dead' || o.state === 'die') continue;
+    if (Math.hypot(o.x - x, o.y - y) < 0.55) return false;
+  }
+  return true;
+}
+function hasKeyFor(lock){ return lock === 'gold' ? p.keyGold : p.keySilver; }
+function openDoor(d){
+  if (!d) return;
+  if (d.lock && !hasKeyFor(d.lock)){
+    if (lockMsgT <= 0){
+      lockMsgT = 0.9; SND.locked();
+      note('LOCKED - NEED THE ' + d.lock.toUpperCase() + ' KEY');
+    }
+    return;
+  }
+  if (!d.opening && d.open < 1){ d.opening = true; SND.door(); }
+}
+function bump(){
+  if (!lastBlock) return;
+  if (isDoorTile(lastBlock.t)) openDoor(doorAt(lastBlock.x, lastBlock.y));
+  else if (lastBlock.t === 9) completeLevel();
+}
+function movePlayer(nx, ny){
+  lastBlock = null;
+  if (canMove(nx, p.y)) p.x = nx; else bump();
+  lastBlock = null;
+  if (canMove(p.x, ny)) p.y = ny; else bump();
+}
+function useKey(){
+  if (state !== 'playing' || paused) return;
+  var dists = [0.6, 1.1];
+  for (var i = 0; i < dists.length; i++){
+    var tx = Math.floor(p.x + p.dx * dists[i]);
+    var ty = Math.floor(p.y + p.dy * dists[i]);
+    var t = tileAt(tx, ty);
+    if (isDoorTile(t)){ openDoor(doorAt(tx, ty)); return; }
+    if (t === 9){ completeLevel(); return; }
+    if (t >= 4 && t <= 6){ pushWall(tx, ty, t); return; }
+  }
+}
+function pushWall(tx, ty, t){
+  for (var i = 0; i < pushes.length; i++)
+    if (pushes[i].x === tx && pushes[i].y === ty) return;
+  var dx = 0, dy = 0;
+  if (Math.abs(p.dx) > Math.abs(p.dy)) dx = p.dx > 0 ? 1 : -1;
+  else dy = p.dy > 0 ? 1 : -1;
+  if (tileAt(tx + dx, ty + dy) !== 0){ SND.locked(); note('IT WILL NOT BUDGE'); return; }
+  pushes.push({ x: tx, y: ty, t: t, dx: dx, dy: dy, steps: 0, timer: 0.12 });
+  secretsFound++;
+  SND.secret();
+  note('A SECRET PASSAGE OPENS');
+}
+function updatePushes(dt){
+  for (var i = pushes.length - 1; i >= 0; i--){
+    var w = pushes[i];
+    w.timer -= dt;
+    if (w.timer > 0) continue;
+    var nx = w.x + w.dx, ny = w.y + w.dy;
+    if (tileAt(nx, ny) !== 0){ pushes.splice(i, 1); continue; }
+    var occupied = (Math.floor(p.x) === nx && Math.floor(p.y) === ny);
+    for (var j = 0; j < enemies.length && !occupied; j++){
+      var e = enemies[j];
+      if (e.state !== 'dead' && Math.floor(e.x) === nx && Math.floor(e.y) === ny) occupied = true;
+    }
+    if (occupied){ w.timer = 0.2; continue; }
+    grid[ny * GW + nx] = w.t;
+    grid[w.y * GW + w.x] = 0;
+    w.x = nx; w.y = ny; w.steps++;
+    SND.door();
+    if (w.steps >= 2) pushes.splice(i, 1);
+    else w.timer = 0.32;
+  }
+}
+
+// ============================================================= COMBAT
+function los(x0, y0, x1, y1){
+  var dx = x1 - x0, dy = y1 - y0;
+  var dist = Math.hypot(dx, dy);
+  var steps = Math.max(1, Math.ceil(dist * 4));
+  for (var i = 1; i < steps; i++){
+    var t = i / steps;
+    var tx = Math.floor(x0 + dx * t), ty = Math.floor(y0 + dy * t);
+    var tl = tileAt(tx, ty);
+    if (tl === 0) continue;
+    if (isDoorTile(tl)){
+      var d = doorAt(tx, ty);
+      if (d && d.open > 0.7) continue;
+      return false;
+    }
+    return false;
+  }
+  return true;
+}
+function damagePlayer(d, sx, sy){
+  if (state !== 'playing') return;
+  p.hp -= d; hurtT = 1; SND.hurt();
+  hurtFrom = (sx !== undefined) ? aimAngle(sx - p.x, sy - p.y) : 0;
+  if (p.hp <= 0){ p.hp = 0; showGameOver(); }
+}
+function alertNear(r){
+  for (var i = 0; i < enemies.length; i++){
+    var e = enemies[i];
+    if (e.state === 'idle' && Math.hypot(e.x - p.x, e.y - p.y) < r){ e.state = 'chase'; e.cool = 0.8; }
+  }
+}
+function hitEnemy(e, dmg){
+  e.hp -= dmg;
+  if (e.hp <= 0){
+    e.state = 'die'; e.t = 0.45; kills++; SND.edie();
+  } else {
+    e.state = 'chase'; e.cool = Math.min(e.cool, 0.5);
+  }
+}
+function aimAngle(dx, dy){
+  var a = Math.atan2(dy, dx) - Math.atan2(p.dy, p.dx);
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+function switchWeapon(w){
+  if (state !== 'playing' || paused || w === p.weapon) return;
+  if (w === 1 && !p.hasShotgun){ note('NO SHOTGUN YET'); return; }
+  p.weapon = w;
+  fireCool = Math.max(fireCool, 0.25);
+  SND.click();
+  note(w === 1 ? 'SHOTGUN READY' : 'PISTOL READY');
+}
+function shoot(){
+  if (state !== 'playing' || paused || fireCool > 0) return;
+  if (p.weapon === 1){ shootShotgun(); return; }
+  fireCool = 0.28;
+  if (p.ammo <= 0){ SND.click(); note('OUT OF AMMO'); return; }
+  p.ammo--; recoil = 1; flashT = 0.07; SND.shot();
+  spawnCasing(0);
+  alertNear(9);
+  var best = null, bd = 1e9;
+  for (var i = 0; i < enemies.length; i++){
+    var e = enemies[i];
+    if (e.state === 'dead' || e.state === 'die') continue;
+    var dx = e.x - p.x, dy = e.y - p.y, d = Math.hypot(dx, dy);
+    if (d > 18 || d < 0.01) continue;
+    if (Math.abs(aimAngle(dx, dy)) > Math.atan2(0.42, d)) continue;
+    if (!los(p.x, p.y, e.x, e.y)) continue;
+    if (d < bd){ bd = d; best = e; }
+  }
+  if (best) hitEnemy(best, Math.random() < 0.45 ? 2 : 1);
+}
+function shootShotgun(){
+  fireCool = 0.95;
+  if (p.shells <= 0){ SND.click(); note('OUT OF SHELLS'); fireCool = 0.4; return; }
+  p.shells--; recoil = 1.6; flashT = 0.1; SND.sshot();
+  spawnCasing(1);
+  alertNear(11);
+  for (var i = 0; i < enemies.length; i++){
+    var e = enemies[i];
+    if (e.state === 'dead' || e.state === 'die') continue;
+    var dx = e.x - p.x, dy = e.y - p.y, d = Math.hypot(dx, dy);
+    if (d > 9 || d < 0.01) continue;
+    if (Math.abs(aimAngle(dx, dy)) > 0.26 + 0.3 / Math.max(1, d)) continue;
+    if (!los(p.x, p.y, e.x, e.y)) continue;
+    hitEnemy(e, d < 2.5 ? 3 : d < 5 ? 2 : 1);
+  }
+}
+// ejected casings - purely cosmetic screen-space particles
+function spawnCasing(kind){
+  parts.push({
+    x: W / 2 + 8, y: H - 52,
+    vx: 55 + Math.random() * 45, vy: -95 - Math.random() * 40,
+    rot: Math.random() * 6.28, vr: 9 + Math.random() * 8,
+    life: 0.9, kind: kind
+  });
+  if (kind === 1){
+    parts.push({
+      x: W / 2 + 6, y: H - 50,
+      vx: 40 + Math.random() * 30, vy: -70 - Math.random() * 30,
+      rot: Math.random() * 6.28, vr: -8 - Math.random() * 6,
+      life: 0.8, kind: 2
+    });
+  }
+}
+function updateParts(dt){
+  for (var i = parts.length - 1; i >= 0; i--){
+    var q = parts[i];
+    q.life -= dt;
+    if (q.life <= 0 || q.y > H + 8){ parts.splice(i, 1); continue; }
+    q.vy += 520 * dt;
+    q.x += q.vx * dt; q.y += q.vy * dt;
+    q.rot += q.vr * dt;
+  }
+}
+function drawParts(){
+  for (var i = 0; i < parts.length; i++){
+    var q = parts[i];
+    g.save();
+    g.translate(q.x, q.y);
+    g.rotate(q.rot);
+    g.globalAlpha = Math.min(1, q.life * 3);
+    if (q.kind === 1){                       // shotgun shell: red hull, brass head
+      g.fillStyle = '#b84040'; g.fillRect(-3, -2, 6, 4);
+      g.fillStyle = '#c9a23f'; g.fillRect(-3, -2, 2, 4);
+    } else if (q.kind === 2){                // smoke wad
+      g.fillStyle = 'rgba(190,190,200,0.5)';
+      g.fillRect(-2, -2, 4, 4);
+    } else {                                 // pistol brass
+      g.fillStyle = '#c9a23f'; g.fillRect(-2, -1, 5, 2);
+      g.fillStyle = '#ffe9a3'; g.fillRect(-2, -1, 1, 2);
+    }
+    g.restore();
+  }
+  g.globalAlpha = 1;
+}
+
+// ============================================================= UPDATE
+function updateEnemies(dt){
+  for (var i = 0; i < enemies.length; i++){
+    var e = enemies[i];
+    e.animT += dt;
+    if (e.state === 'dead') continue;
+    if (e.state === 'die'){ e.t -= dt; if (e.t <= 0) e.state = 'dead'; continue; }
+    var dx = p.x - e.x, dy = p.y - e.y, dist = Math.hypot(dx, dy);
+    if (e.state === 'idle'){
+      if (dist < 10 && los(e.x, e.y, p.x, p.y)){
+        e.state = 'chase'; e.cool = 0.6 + Math.random() * 0.7; SND.alert();
+      }
+      continue;
+    }
+    if (e.state === 'aim'){
+      e.t -= dt;
+      if (!los(e.x, e.y, p.x, p.y)){ e.state = 'chase'; e.cool = 0.4; continue; }
+      if (e.t <= 0){
+        e.state = 'fire'; e.t = 0.16; SND.eshot();
+        var pHit = Math.max(0.15, 0.8 - dist * 0.05);
+        if (Math.random() < pHit) damagePlayer(4 + ((Math.random() * 9) | 0), e.x, e.y);
+      }
+      continue;
+    }
+    if (e.state === 'fire'){
+      e.t -= dt;
+      if (e.t <= 0){ e.state = 'chase'; e.cool = 0.9 + Math.random() * 0.9; }
+      continue;
+    }
+    // chase
+    e.cool -= dt;
+    var sees = los(e.x, e.y, p.x, p.y);
+    if (sees && e.cool <= 0 && dist < 11){ e.state = 'aim'; e.t = 0.4; continue; }
+    if (dist > 1.6){
+      var sp = 1.55 * dt;
+      var nx = e.x + (dx / dist) * sp, ny = e.y + (dy / dist) * sp;
+      if (canMoveEnt(nx, e.y, e)) e.x = nx;
+      if (canMoveEnt(e.x, ny, e)) e.y = ny;
+    }
+  }
+}
+function updateItems(){
+  for (var i = 0; i < items.length; i++){
+    var it = items[i];
+    if (it.taken) continue;
+    if (Math.hypot(it.x - p.x, it.y - p.y) < 0.65){
+      if (it.kind === 'h'){
+        if (p.hp >= 100) continue;
+        p.hp = Math.min(100, p.hp + 25); note('+25 HEALTH');
+      } else if (it.kind === 'a'){
+        if (p.ammo >= 99) continue;
+        p.ammo = Math.min(99, p.ammo + 8); note('+8 AMMO');
+      } else if (it.kind === 'k'){
+        p.keyGold = true; note('PICKED UP THE GOLD KEY');
+      } else if (it.kind === 's'){
+        p.keySilver = true; note('PICKED UP THE SILVER KEY');
+      } else if (it.kind === 'w'){
+        if (p.hasShotgun){
+          if (p.shells >= 50) continue;
+          p.shells = Math.min(50, p.shells + 4); note('+4 SHELLS');
+        } else {
+          p.hasShotgun = true;
+          p.shells = Math.min(50, p.shells + 4);
+          p.weapon = 1;
+          note('SHOTGUN - 1/2 OR Q TO SWITCH');
+        }
+      } else if (it.kind === 'c'){
+        if (p.shells >= 50) continue;
+        p.shells = Math.min(50, p.shells + 4); note('+4 SHELLS');
+      }
+      it.taken = true; SND.pickup();
+    }
+  }
+}
+function rot(a){
+  var c = Math.cos(a), s = Math.sin(a);
+  var dx = p.dx * c - p.dy * s; p.dy = p.dx * s + p.dy * c; p.dx = dx;
+  var px = p.plx * c - p.ply * s; p.ply = p.plx * s + p.ply * c; p.plx = px;
+}
+function update(dt){
+  fireCool = Math.max(0, fireCool - dt);
+  recoil = Math.max(0, recoil - dt * 5);
+  flashT = Math.max(0, flashT - dt);
+  hurtT = Math.max(0, hurtT - dt * 2.2);
+  lockMsgT = Math.max(0, lockMsgT - dt);
+  doors.forEach(function(d){
+    if (d.opening && d.open < 1) d.open = Math.min(1, d.open + dt * 1.6);
+  });
+  updatePushes(dt);
+  if (touchFire) shoot();
+  var ms = 3.4 * dt, ts = 2.6 * dt;
+  if (K.ArrowLeft) rot(-ts);
+  if (K.ArrowRight) rot(ts);
+  var f = 0, s = 0;
+  if (K.KeyW || K.ArrowUp) f += 1;
+  if (K.KeyS || K.ArrowDown) f -= 1;
+  if (K.KeyA) s -= 1;
+  if (K.KeyD) s += 1;
+  f += tMoveF; s += tMoveS;
+  if (f || s){
+    var l = Math.hypot(f, s);
+    if (l > 1){ f /= l; s /= l; }
+    movePlayer(p.x + (p.dx * f - p.dy * s) * ms, p.y + (p.dy * f + p.dx * s) * ms);
+    bob += dt * 9; mv = Math.min(1, mv + dt * 8);
+  } else {
+    mv = Math.max(0, mv - dt * 6);
+  }
+  updateEnemies(dt);
+  updateItems();
+  updateParts(dt);
+  noteT = Math.max(0, noteT - dt);
+}
+
+// ============================================================= RENDER
+function castWalls(){
+  var flashBoost = flashT > 0 ? Math.min(1, flashT * 14) : 0;
+  for (var x = 0; x < W; x++){
+    var cx = 2 * x / W - 1;
+    var rdx = p.dx + p.plx * cx, rdy = p.dy + p.ply * cx;
+    var mapX = Math.floor(p.x), mapY = Math.floor(p.y);
+    var ddx = Math.abs(1 / rdx), ddy = Math.abs(1 / rdy);
+    var stepX, sdx, stepY, sdy;
+    if (rdx < 0){ stepX = -1; sdx = (p.x - mapX) * ddx; } else { stepX = 1; sdx = (mapX + 1 - p.x) * ddx; }
+    if (rdy < 0){ stepY = -1; sdy = (p.y - mapY) * ddy; } else { stepY = 1; sdy = (mapY + 1 - p.y) * ddy; }
+    var side = 0, hit = 0, tile = 0, perp = 0, wallX = 0, tex = null, steps = 0;
+    while (!hit && steps++ < 80){
+      if (sdx < sdy){ sdx += ddx; mapX += stepX; side = 0; }
+      else { sdy += ddy; mapY += stepY; side = 1; }
+      tile = tileAt(mapX, mapY);
+      if (mapX >= 0 && mapY >= 0 && mapX < GW && mapY < GH) explored[mapY * GW + mapX] = 1;
+      if (tile === 0) continue;
+      if (isDoorTile(tile)){
+        var dr = doors.get(mapY * GW + mapX);
+        if (!dr || dr.open >= 1) continue;
+        var dist;
+        if (side === 0) dist = (mapX - p.x + (1 - stepX) / 2 + stepX * 0.5) / rdx;
+        else dist = (mapY - p.y + (1 - stepY) / 2 + stepY * 0.5) / rdy;
+        var hx = p.x + rdx * dist, hy = p.y + rdy * dist;
+        if (Math.floor(hx) !== mapX || Math.floor(hy) !== mapY) continue;
+        wallX = (side === 0 ? hy : hx); wallX -= Math.floor(wallX);
+        wallX += dr.open;
+        if (wallX >= 1) continue;
+        perp = dist;
+        tex = (tile === 10 ? TXG : tile === 11 ? TXS : TXD)[side];
+        hit = 1;
+      } else {
+        if (side === 0) perp = (mapX - p.x + (1 - stepX) / 2) / rdx;
+        else perp = (mapY - p.y + (1 - stepY) / 2) / rdy;
+        wallX = (side === 0 ? p.y + perp * rdy : p.x + perp * rdx);
+        wallX -= Math.floor(wallX);
+        tex = (tile === 9 ? TXX : (tile >= 4 && tile <= 6) ? TXP[tile] : TXW[tile])[side];
+        hit = 1;
+      }
+    }
+    if (!hit){ zbuf[x] = 1e9; continue; }
+    perp = Math.max(perp, 0.02);
+    zbuf[x] = perp;
+    var texX = (wallX * TEX) | 0;
+    if (!isDoorTile(tile)){
+      if (side === 0 && rdx > 0) texX = TEX - texX - 1;
+      if (side === 1 && rdy < 0) texX = TEX - texX - 1;
+    }
+    var lh = H / perp, ds = (H - lh) / 2;
+    g.drawImage(tex, texX, 0, 1, TEX, x, ds, 1, lh);
+    // cool blue-black distance fog combined with baked sector light;
+    // flicker zones pulse, and muzzle flash briefly lights nearby walls
+    var lt = 1;
+    if (mapX >= 0 && mapY >= 0 && mapX < GW && mapY < GH){
+      var lidx = mapY * GW + mapX;
+      lt = lightMap[lidx];
+      if (flickMap[lidx]) lt *= flickVal;
+    }
+    var dk = Math.min(0.9, Math.max(0, (perp - 1.4) / 12) + (1 - lt) * 0.55);
+    if (flashBoost > 0) dk = Math.max(0, dk - flashBoost * Math.max(0, 1 - perp / 5.5) * 0.6);
+    if (dk > 0.02){
+      g.fillStyle = 'rgba(9,12,24,' + dk.toFixed(2) + ')';
+      g.fillRect(x, Math.max(0, ds), 1, Math.min(H, Math.ceil(lh)));
+    } else if (flashBoost > 0 && perp < 3){
+      g.fillStyle = 'rgba(255,200,110,' + (flashBoost * 0.08).toFixed(2) + ')';
+      g.fillRect(x, Math.max(0, ds), 1, Math.min(H, Math.ceil(lh)));
+    }
+  }
+}
+function guardCanvas(e){
+  if (e.state === 'dead') return SPR.dead;
+  if (e.state === 'die') return SPR.die;
+  if (e.state === 'aim') return SPR.aim;
+  if (e.state === 'fire') return SPR.fire;
+  if (e.state === 'chase') return (Math.floor(e.animT * 5) % 2) ? SPR.walk2 : SPR.walk1;
+  return SPR.walk1;
+}
+function drawSprites(){
+  var list = [];
+  var i, e, it, dx, dy;
+  for (i = 0; i < enemies.length; i++){
+    e = enemies[i];
+    dx = e.x - p.x; dy = e.y - p.y;
+    list.push({ x: e.x, y: e.y, c: guardCanvas(e), sc: 1, d: dx * dx + dy * dy });
+  }
+  for (i = 0; i < items.length; i++){
+    it = items[i];
+    if (it.taken) continue;
+    dx = it.x - p.x; dy = it.y - p.y;
+    var ic, isc = 0.55;
+    var glint = ((nowT * 2.4 + it.x * 0.7 + it.y * 1.3) % 3) < 0.5;  // periodic sparkle
+    if (it.kind === 'h') ic = SPR.med;
+    else if (it.kind === 'a') ic = SPR.amm;
+    else if (it.kind === 'k'){ ic = glint ? SPR.keyGoldS : SPR.keyGold; isc = 0.5; }
+    else if (it.kind === 's'){ ic = glint ? SPR.keySilverS : SPR.keySilver; isc = 0.5; }
+    else if (it.kind === 'w'){ ic = SPR.sgun; isc = 0.6; }
+    else ic = SPR.shell;
+    list.push({ x: it.x, y: it.y, c: ic, sc: isc, d: dx * dx + dy * dy,
+                bob: true, ph: it.x * 3.1 + it.y * 1.7 });
+  }
+  list.sort(function(a, b){ return b.d - a.d; });
+  var invDet = 1 / (p.plx * p.dy - p.dx * p.ply);
+  for (i = 0; i < list.length; i++){
+    var s = list[i];
+    var sx = s.x - p.x, sy = s.y - p.y;
+    var tx = invDet * (p.dy * sx - p.dx * sy);
+    var ty = invDet * (-p.ply * sx + p.plx * sy);
+    if (ty <= 0.08) continue;
+    var screenX = (W / 2) * (1 + tx / ty);
+    var fullH = Math.abs(H / ty);
+    var size = fullH * s.sc;
+    var shift = (fullH - size) / 2;
+    var y0 = H / 2 - size / 2 + shift;
+    if (s.bob) y0 += Math.sin(nowT * 2.6 + s.ph) * size * 0.05;
+    var x0 = screenX - size / 2;
+    var a = Math.min(1, Math.max(0.12, 1.35 - ty / 14));
+    g.globalAlpha = a;
+    var st0 = Math.max(0, Math.floor(x0));
+    var st1 = Math.min(W - 1, Math.ceil(x0 + size));
+    for (var st = st0; st <= st1; st++){
+      if (ty >= zbuf[st]) continue;
+      var texX = Math.floor((st - x0) / size * TEX);
+      if (texX < 0 || texX >= TEX) continue;
+      g.drawImage(s.c, texX, 0, 1, TEX, st, y0, 1, size);
+    }
+    g.globalAlpha = 1;
+  }
+}
+function vmFlash(rx, ry, big){
+  // layered muzzle flash with warm falloff
+  var r = big ? 15 : 11;
+  var gr = g.createRadialGradient(rx, ry, 2, rx, ry, r + 8);
+  gr.addColorStop(0, 'rgba(255,245,190,0.95)');
+  gr.addColorStop(0.45, 'rgba(255,170,50,0.6)');
+  gr.addColorStop(1, 'rgba(255,110,10,0)');
+  g.fillStyle = gr;
+  g.beginPath(); g.arc(rx, ry, r + 8, 0, 7); g.fill();
+  g.fillStyle = '#ffb53a';
+  g.fillRect(rx - 2, ry - r - 7, 4, r + 7);
+  g.fillRect(rx - r - 3, ry - 2, (r + 3) * 2, 4);
+  g.fillStyle = '#fff3b0';
+  g.beginPath(); g.arc(rx, ry, big ? 7 : 5, 0, 7); g.fill();
+}
+function drawShotgun(rx, ry, kick){
+  // pump slides back then forward while the action cycles
+  var t = 0.95 - fireCool;
+  var pump = (p.weapon === 1 && fireCool > 0 && t > 0.25 && t < 0.65)
+           ? Math.sin((t - 0.25) / 0.4 * Math.PI) * 7 : 0;
+  if (flashT > 0){ vmFlash(rx - 5, ry - 62 + kick, true); vmFlash(rx + 5, ry - 60 + kick, false); }
+  // twin barrels with vent rib
+  g.fillStyle = '#0c0e11'; g.fillRect(rx - 12, ry - 60, 10, 4); g.fillRect(rx + 2, ry - 60, 10, 4);
+  g.fillStyle = '#23262b'; g.fillRect(rx - 12, ry - 56, 10, 30); g.fillRect(rx + 2, ry - 56, 10, 30);
+  g.fillStyle = '#3e434c'; g.fillRect(rx - 11, ry - 56, 2, 30); g.fillRect(rx + 3, ry - 56, 2, 30);
+  g.fillStyle = '#34383f'; g.fillRect(rx - 9, ry - 54, 5, 26); g.fillRect(rx + 5, ry - 54, 5, 26);
+  g.fillStyle = '#15171a';
+  g.fillRect(rx - 8, ry - 52, 3, 2); g.fillRect(rx - 8, ry - 46, 3, 2); g.fillRect(rx - 8, ry - 40, 3, 2);
+  g.fillRect(rx + 6, ry - 52, 3, 2); g.fillRect(rx + 6, ry - 46, 3, 2); g.fillRect(rx + 6, ry - 40, 3, 2);
+  g.fillStyle = '#4a515c'; g.fillRect(rx - 1, ry - 58, 2, 32);   // rib
+  // receiver
+  g.fillStyle = '#1b1d20'; g.fillRect(rx - 13, ry - 28, 26, 5);
+  g.fillStyle = '#2c2e36'; g.fillRect(rx - 13, ry - 28, 26, 1);
+  // pump forend (wood, grooved) - slides with the action
+  g.fillStyle = '#6b4526'; g.fillRect(rx - 13, ry - 24 + pump, 26, 10);
+  g.fillStyle = '#8a5c34'; g.fillRect(rx - 13, ry - 24 + pump, 26, 2);
+  g.fillStyle = '#50331c';
+  g.fillRect(rx - 10, ry - 21 + pump, 2, 6); g.fillRect(rx - 4, ry - 21 + pump, 2, 6);
+  g.fillRect(rx + 2, ry - 21 + pump, 2, 6); g.fillRect(rx + 8, ry - 21 + pump, 2, 6);
+  g.fillStyle = '#3a2512'; g.fillRect(rx - 13, ry - 16 + pump, 26, 2);
+  // hands gripping the forend
+  g.fillStyle = '#c79b73'; g.fillRect(rx - 15, ry - 13 + pump, 30, 13 - pump);
+  g.fillStyle = '#dcb088'; g.fillRect(rx - 15, ry - 13 + pump, 30, 2);
+  g.fillStyle = '#a87f5c'; g.fillRect(rx - 15, ry - 5, 30, 5);
+  g.fillStyle = 'rgba(0,0,0,0.2)';
+  g.fillRect(rx - 7, ry - 12 + pump, 1, 8); g.fillRect(rx + 1, ry - 12 + pump, 1, 8);
+}
+function drawGun(){
+  var sway = Math.sin(bob) * 4 * mv;
+  var bobY = Math.abs(Math.cos(bob)) * 3 * mv;
+  // recoil curve: sharp kick up, eased settle back down
+  var r = Math.min(1, recoil);
+  var kick = Math.pow(r, 1.6) * (p.weapon === 1 ? 20 : 13);
+  var tilt = Math.pow(r, 2) * 0.05 + Math.sin(bob) * 0.008 * mv;
+  var rx = Math.round(W / 2 + sway + r * 2);
+  var ry = Math.round(H + bobY + kick);
+  g.save();
+  g.translate(rx, ry);
+  g.rotate(tilt);
+  g.translate(-rx, -ry);
+  if (p.weapon === 1){
+    drawShotgun(rx, ry, kick);
+    g.restore();
+    return;
+  }
+  if (flashT > 0) vmFlash(rx, ry - 62 + Math.round(r * 2), false);
+  // front sight post + rear notch
+  g.fillStyle = '#15171a'; g.fillRect(rx - 2, ry - 62, 4, 7);
+  g.fillStyle = '#ffb03a'; g.fillRect(rx - 1, ry - 62, 2, 2);  // sight dot
+  // slide: body, sheen line, serrations, ejection port
+  var slideBk = Math.round(Math.pow(r, 1.4) * 5);              // slide cycles back
+  g.fillStyle = '#1b1d22'; g.fillRect(rx - 9, ry - 56 + slideBk, 18, 32 - slideBk);
+  g.fillStyle = '#2e323a'; g.fillRect(rx - 7, ry - 54 + slideBk, 14, 27);
+  g.fillStyle = '#434854'; g.fillRect(rx - 7, ry - 54 + slideBk, 2, 27);
+  g.fillStyle = '#101216';
+  g.fillRect(rx - 6, ry - 50 + slideBk, 12, 1); g.fillRect(rx - 6, ry - 47 + slideBk, 12, 1);
+  g.fillRect(rx - 6, ry - 44 + slideBk, 12, 1);
+  g.fillStyle = '#0a0c0f'; g.fillRect(rx + 1, ry - 40 + slideBk, 6, 7);  // port
+  g.fillStyle = '#5a4a28'; g.fillRect(rx + 2, ry - 38 + slideBk, 4, 3);  // chambered brass
+  // frame + trigger guard
+  g.fillStyle = '#16181c'; g.fillRect(rx - 10, ry - 26, 20, 9);
+  g.fillStyle = '#23262b'; g.fillRect(rx - 10, ry - 26, 20, 2);
+  g.fillStyle = '#0c0e11'; g.fillRect(rx - 5, ry - 20, 10, 3);
+  // hands wrapping the grip
+  g.fillStyle = '#c79b73'; g.fillRect(rx - 13, ry - 18, 26, 18);
+  g.fillStyle = '#dcb088'; g.fillRect(rx - 13, ry - 18, 26, 2);
+  g.fillStyle = '#a87f5c'; g.fillRect(rx - 13, ry - 8, 26, 8);
+  g.fillStyle = 'rgba(0,0,0,0.22)';
+  g.fillRect(rx - 6, ry - 15, 1, 9); g.fillRect(rx + 1, ry - 15, 1, 9);
+  g.fillStyle = '#c79b73'; g.fillRect(rx - 14, ry - 14, 3, 7);  // thumb
+  g.restore();
+}
+function drawMini(){
+  mx.fillStyle = 'rgba(10,12,18,0.85)';
+  mx.fillRect(0, 0, mm.width, mm.height);
+  var c = 5;
+  for (var y = 0; y < GH; y++){
+    for (var x = 0; x < GW; x++){
+      if (!explored[y * GW + x]) continue;
+      var t = grid[y * GW + x], col = null;
+      if (t === 1 || t === 4) col = '#8a4a37';
+      else if (t === 2 || t === 5) col = '#85858c';
+      else if (t === 3 || t === 6) col = '#5a6b7c';
+      else if (t === 8) col = '#c9a23f';
+      else if (t === 10) col = '#e8c23a';
+      else if (t === 11) col = '#c8ccd4';
+      else if (t === 9) col = '#59d6a0';
+      else col = '#20242c';
+      mx.fillStyle = col;
+      mx.fillRect(x * c, y * c, c, c);
+    }
+  }
+  for (var i = 0; i < enemies.length; i++){
+    var e = enemies[i];
+    if (e.state === 'dead' || e.state === 'die' || e.state === 'idle') continue;
+    if (!explored[Math.floor(e.y) * GW + Math.floor(e.x)]) continue;
+    mx.fillStyle = '#e04040';
+    mx.fillRect(e.x * c - 1.5, e.y * c - 1.5, 3, 3);
+  }
+  mx.save();
+  mx.translate(p.x * c, p.y * c);
+  mx.rotate(Math.atan2(p.dy, p.dx));
+  mx.fillStyle = '#ffd96b';
+  mx.beginPath(); mx.moveTo(4, 0); mx.lineTo(-3, -3); mx.lineTo(-3, 3); mx.closePath(); mx.fill();
+  mx.restore();
+}
+var uhp = document.getElementById('uhp'), uam = document.getElementById('uam'),
+    ulv = document.getElementById('ulv'), ukl = document.getElementById('ukl'),
+    ush = document.getElementById('ush');
+function drawHUD(){
+  uhp.textContent = p.hp;
+  uhp.style.color = p.hp < 30 ? '#ff5a5a' : '#ffdf8a';
+  uam.textContent = p.ammo + (p.weapon === 0 ? '*' : '');
+  uam.style.color = p.ammo <= 4 ? '#ffb03a' : '#ffdf8a';
+  ush.textContent = p.shells + (p.weapon === 1 ? '*' : '');
+  ush.style.color = p.hasShotgun ? (p.shells <= 2 ? '#ffb03a' : '#ffdf8a') : '#555e70';
+  ulv.textContent = (li + 1);
+  ukl.textContent = kills + '/' + totalEnemies;
+  noteEl.style.opacity = Math.min(1, noteT);
+}
+function drawKeyIcon(x0, y0, main, dark, lite){
+  // slotted plate with a proper key silhouette
+  g.fillStyle = 'rgba(5,7,12,0.65)'; g.fillRect(x0 - 3, y0 - 3, 22, 12);
+  g.fillStyle = dark; g.fillRect(x0 - 3, y0 - 3, 22, 1); g.fillRect(x0 - 3, y0 + 8, 22, 1);
+  g.fillStyle = main;
+  g.fillRect(x0, y0, 6, 6);                      // bow
+  g.fillRect(x0 + 6, y0 + 2, 10, 2);             // shaft
+  g.fillRect(x0 + 10, y0 + 4, 2, 3);             // wards
+  g.fillRect(x0 + 14, y0 + 4, 2, 3);
+  g.fillStyle = lite;
+  g.fillRect(x0, y0, 6, 1); g.fillRect(x0 + 6, y0 + 2, 10, 1);
+  g.fillStyle = '#0a0c12';
+  g.fillRect(x0 + 2, y0 + 2, 2, 2);              // bow hole
+}
+function drawKeys(){
+  if (p.keyGold) drawKeyIcon(7, 7, '#e8c23a', '#6b5a1e', '#fff0b0');
+  if (p.keySilver) drawKeyIcon(7, 20, '#c8ccd4', '#565c68', '#f4f7ff');
+}
+// damage vignettes baked once: red edge ring + directional side washes
+function mkVign(fn){
+  var c = document.createElement('canvas'); c.width = W; c.height = H;
+  fn(c.getContext('2d')); return c;
+}
+var vignC = mkVign(function(x){
+  var gr = x.createRadialGradient(W / 2, H / 2, H * 0.32, W / 2, H / 2, H * 0.78);
+  gr.addColorStop(0, 'rgba(180,20,20,0)');
+  gr.addColorStop(0.7, 'rgba(190,22,22,0.3)');
+  gr.addColorStop(1, 'rgba(160,10,10,0.72)');
+  x.fillStyle = gr; x.fillRect(0, 0, W, H);
+});
+var vignL = mkVign(function(x){
+  var gr = x.createLinearGradient(0, 0, W * 0.45, 0);
+  gr.addColorStop(0, 'rgba(210,26,26,0.65)'); gr.addColorStop(1, 'rgba(210,26,26,0)');
+  x.fillStyle = gr; x.fillRect(0, 0, W * 0.45, H);
+});
+var vignR = mkVign(function(x){
+  var gr = x.createLinearGradient(W, 0, W * 0.55, 0);
+  gr.addColorStop(0, 'rgba(210,26,26,0.65)'); gr.addColorStop(1, 'rgba(210,26,26,0)');
+  x.fillStyle = gr; x.fillRect(W * 0.55, 0, W * 0.45, H);
+});
+var vignF = mkVign(function(x){
+  var gr = x.createLinearGradient(0, 0, 0, H * 0.4);
+  gr.addColorStop(0, 'rgba(210,26,26,0.55)'); gr.addColorStop(1, 'rgba(210,26,26,0)');
+  x.fillStyle = gr; x.fillRect(0, 0, W, H * 0.4);
+});
+function render(){
+  // irregular two-oscillator beat for failing-light zones
+  flickVal = 0.68 + 0.32 * (0.5 + 0.5 * Math.sin(nowT * 13)) * (0.5 + 0.5 * Math.sin(nowT * 7.7 + 1.3));
+  g.drawImage(bg, 0, 0, W, H);
+  castWalls();
+  drawSprites();
+  if (state === 'playing'){
+    drawGun();
+    drawParts();
+    g.fillStyle = 'rgba(255,255,255,0.75)';
+    g.fillRect(W / 2 - 1, H / 2 - 1, 2, 2);
+    drawKeys();
+  }
+  if (hurtT > 0){
+    g.globalAlpha = Math.min(1, hurtT * 1.1);
+    g.drawImage(vignC, 0, 0, W, H);
+    if (hurtFrom > 0.35) g.drawImage(vignR, 0, 0, W, H);
+    else if (hurtFrom < -0.35) g.drawImage(vignL, 0, 0, W, H);
+    else g.drawImage(vignF, 0, 0, W, H);
+    g.globalAlpha = 1;
+  }
+  if (flashT > 0){
+    // muzzle flash global brightness pulse
+    g.fillStyle = 'rgba(255,214,130,' + (Math.min(1, flashT * 14) * 0.06).toFixed(3) + ')';
+    g.fillRect(0, 0, W, H);
+  }
+  if (paused && state === 'playing'){
+    g.fillStyle = 'rgba(5,6,10,0.6)';
+    g.fillRect(0, 0, W, H);
+    g.fillStyle = '#cfd8ea';
+    g.font = 'bold 18px "Courier New",monospace';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('PAUSED', W / 2, H / 2 - 10);
+    g.font = 'bold 9px "Courier New",monospace';
+    g.fillText('PRESS P TO RESUME', W / 2, H / 2 + 10);
+    g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+  }
+  if (mmOn && state === 'playing') drawMini();
+  drawHUD();
+}
+
+// ============================================================= INPUT
+var K = {};
+addEventListener('keydown', function(e){
+  if (e.code === 'Space' || e.code === 'Tab' ||
+      e.code === 'ArrowUp' || e.code === 'ArrowDown' ||
+      e.code === 'ArrowLeft' || e.code === 'ArrowRight') e.preventDefault();
+  if (e.repeat) return;
+  K[e.code] = true;
+  if (e.code === 'KeyM'){ muted = !muted; note(muted ? 'SOUND OFF' : 'SOUND ON'); }
+  else if (e.code === 'KeyG'){ cycleRes(); note('RENDER ' + W + '\u00d7' + H); }
+  else if (e.code === 'Tab' && state === 'playing'){
+    mmOn = !mmOn; mm.style.display = mmOn ? 'block' : 'none';
+  }
+  else if (e.code === 'KeyP'){ if (state === 'playing') paused = !paused; }
+  else if (e.code === 'Digit1'){ switchWeapon(0); }
+  else if (e.code === 'Digit2'){ switchWeapon(1); }
+  else if (e.code === 'KeyQ'){ switchWeapon(p.weapon === 0 ? 1 : 0); }
+  else if (e.code === 'Enter'){ if (state !== 'playing') advance(); }
+  else if (e.code === 'Space'){ if (state === 'playing') shoot(); }
+  else if (e.code === 'KeyE'){ if (state === 'playing') useKey(); }
+});
+addEventListener('keyup', function(e){ K[e.code] = false; });
+addEventListener('blur', function(){ for (var k in K) K[k] = false; });
+
+cv.addEventListener('mousedown', function(){
+  if (state !== 'playing' || paused) return;
+  if (document.pointerLockElement === cv) shoot();
+  else if (cv.requestPointerLock) cv.requestPointerLock();
+  else shoot();
+});
+addEventListener('mousemove', function(e){
+  if (document.pointerLockElement === cv && state === 'playing' && !paused) rot(e.movementX * 0.0022);
+});
+
+// ============================================================= TOUCH
+var touchUI = document.getElementById('touch');
+var stickBase = document.getElementById('stickBase');
+var stickKnob = document.getElementById('stickKnob');
+var touchShown = false;
+var stickId = -1, stickCX = 0, stickCY = 0;
+var turnId = -1, turnLX = 0;
+function showTouch(){
+  if (touchShown) return;
+  touchShown = true;
+  touchUI.style.display = 'block';
+}
+function bindBtn(id, down, up){
+  var el = document.getElementById(id);
+  el.addEventListener('touchstart', function(ev){
+    ev.preventDefault(); ev.stopPropagation(); showTouch(); down();
+  }, { passive: false });
+  el.addEventListener('touchend', function(ev){
+    ev.preventDefault(); ev.stopPropagation(); if (up) up();
+  }, { passive: false });
+  el.addEventListener('touchcancel', function(){ if (up) up(); });
+}
+bindBtn('btnFire', function(){ touchFire = true; shoot(); }, function(){ touchFire = false; });
+bindBtn('btnUse', function(){ useKey(); });
+bindBtn('btnWpn', function(){ switchWeapon(p.weapon === 0 ? 1 : 0); });
+function resetStick(){
+  stickId = -1; tMoveF = 0; tMoveS = 0;
+  stickKnob.style.left = '30px'; stickKnob.style.top = '30px';
+  stickBase.style.left = '36px'; stickBase.style.top = 'auto'; stickBase.style.bottom = '110px';
+}
+addEventListener('touchstart', function(ev){
+  showTouch();
+  if (state !== 'playing') return;      // let overlay taps click through
+  var grab = false;
+  for (var i = 0; i < ev.changedTouches.length; i++){
+    var t = ev.changedTouches[i];
+    if (t.clientX < innerWidth / 2){
+      if (stickId === -1){
+        stickId = t.identifier; stickCX = t.clientX; stickCY = t.clientY;
+        stickBase.style.left = (t.clientX - 48) + 'px';
+        stickBase.style.top = (t.clientY - 48) + 'px';
+        stickBase.style.bottom = 'auto';
+        grab = true;
+      }
+    } else if (turnId === -1){
+      turnId = t.identifier; turnLX = t.clientX;
+      grab = true;
+    }
+  }
+  if (grab && ev.cancelable) ev.preventDefault();
+}, { passive: false });
+addEventListener('touchmove', function(ev){
+  if (state !== 'playing') return;
+  var handled = false;
+  for (var i = 0; i < ev.changedTouches.length; i++){
+    var t = ev.changedTouches[i];
+    if (t.identifier === stickId){
+      var dx = t.clientX - stickCX, dy = t.clientY - stickCY;
+      var m = Math.hypot(dx, dy);
+      if (m > 44){ dx = dx / m * 44; dy = dy / m * 44; }
+      stickKnob.style.left = (30 + dx) + 'px';
+      stickKnob.style.top = (30 + dy) + 'px';
+      tMoveF = Math.abs(dy) > 8 ? -dy / 44 : 0;
+      tMoveS = Math.abs(dx) > 8 ? dx / 44 : 0;
+      handled = true;
+    } else if (t.identifier === turnId){
+      if (!paused) rot((t.clientX - turnLX) * 0.006);
+      turnLX = t.clientX;
+      handled = true;
+    }
+  }
+  if (handled && ev.cancelable) ev.preventDefault();
+}, { passive: false });
+function endTouch(ev){
+  for (var i = 0; i < ev.changedTouches.length; i++){
+    var t = ev.changedTouches[i];
+    if (t.identifier === stickId) resetStick();
+    else if (t.identifier === turnId) turnId = -1;
+  }
+}
+addEventListener('touchend', endTouch);
+addEventListener('touchcancel', endTouch);
+
+// ============================================================= MAIN LOOP
+var last = 0;
+function frame(ts){
+  var dt = Math.min(0.05, (ts - last) / 1000 || 0.016);
+  last = ts;
+  nowT = ts / 1000;
+  if (state === 'playing' && !paused) update(dt);
+  else noteT = Math.max(0, noteT - dt);
+  render();
+  requestAnimationFrame(frame);
+}
+loadLevel(0);
+showTitle();
+requestAnimationFrame(frame);
+</script>
+
+<a href="index.html" class="hub-link" style="top:12px;left:14px">&lt; ARCADE</a>
+<style>
+.hub-link{position:fixed;z-index:10000;font:700 11px/1 "Courier New",monospace;letter-spacing:2px;
+color:#cfd8ea;background:rgba(10,12,20,.72);border:1px solid rgba(140,160,210,.4);
+padding:8px 12px;border-radius:999px;text-decoration:none;opacity:.55;transition:opacity .15s;cursor:pointer;}
+.hub-link:hover{opacity:1;color:#fff;}
+</style>
+</body>
+</html>

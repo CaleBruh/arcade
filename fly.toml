@@ -1,0 +1,41 @@
+# fly launch --no-deploy  then  fly deploy
+app = "arcade-multiplayer"
+primary_region = "lhr"
+
+[build]
+
+[env]
+  PORT = "8080"
+  DATA_DIR = "/data"
+
+# Without this the leaderboards live on the machine's ephemeral disk and are
+# wiped by every single deploy. Create it once:
+#   fly volumes create arcade_data --size 1 --region lhr
+[mounts]
+  source = "arcade_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  # Rooms live in memory, so a second machine would not share them.
+  # Keep one until there is a shared store or sticky routing.
+  min_machines_running = 1
+
+  [http_service.http_options]
+    # WebSockets must not be cut off mid-game
+    idle_timeout = 900
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

@@ -1,0 +1,1919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Solitaire</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  :root {
+    --gold: #c9a44a;
+    --gold-bright: #ecd28a;
+    --gold-dark: #8a6a1f;
+    --brass-edge: #6e5312;
+    --ivory: #faf6ea;
+    --ink: #23232e;
+    --crimson: #a92238;
+    --card-serif: "Didot", "Bodoni MT", "Playfair Display", Georgia, "Times New Roman", serif;
+  }
+  body {
+    margin: 0;
+    overflow: hidden;
+    background-color: #11492a;
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='.13'/%3E%3C/svg%3E"),
+      radial-gradient(120% 85% at 50% 8%, rgba(255,243,196,.16) 0%, rgba(255,243,196,.04) 34%, rgba(255,243,196,0) 58%),
+      radial-gradient(135% 110% at 50% 42%, rgba(0,0,0,0) 46%, rgba(0,0,0,.52) 100%),
+      radial-gradient(1500px 1100px at 50% 16%, #2e7d4c 0%, #1c5c34 50%, #0d3a1e 100%);
+    font-family: Georgia, "Times New Roman", serif;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* stitched leather-trim table border (painted beneath board & toolbar) */
+  body::before {
+    content: "";
+    position: fixed; inset: 7px;
+    pointer-events: none;
+    border-radius: 18px;
+    border: 2px dashed rgba(240, 228, 190, .15);
+    box-shadow:
+      0 0 0 7px rgba(10, 6, 2, .3),
+      inset 0 0 0 1px rgba(0, 0, 0, .25),
+      inset 0 0 30px rgba(0, 0, 0, .2);
+  }
+
+  /* ---------- Toolbar : polished wood rail with brass fittings ---------- */
+  #toolbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 900;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+    padding: 8px 14px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.1), rgba(255,255,255,0) 42%),
+      repeating-linear-gradient(90deg,
+        rgba(0,0,0,.12) 0 2px, rgba(0,0,0,0) 2px 9px,
+        rgba(255,255,255,.035) 9px 11px, rgba(0,0,0,0) 11px 23px),
+      linear-gradient(180deg, #553419 0%, #3a2110 55%, #291409 100%);
+    border-bottom: 1px solid #140a04;
+    box-shadow:
+      inset 0 1px 0 rgba(236,210,138,.28),
+      inset 0 -2px 0 rgba(0,0,0,.4),
+      0 2px 0 rgba(181,138,46,.55),
+      0 4px 14px rgba(0,0,0,.5);
+    color: #e9dcb8;
+  }
+  .tb-title {
+    font-weight: 700; letter-spacing: 5px; font-size: 15px;
+    font-family: var(--card-serif);
+    color: var(--gold-bright); margin-right: 8px;
+    text-shadow: 0 1px 2px rgba(0,0,0,.7), 0 0 14px rgba(236,210,138,.25);
+  }
+  .tb-btn {
+    font: 700 11px/1 Georgia, serif; letter-spacing: 1.5px;
+    color: #2b1d06;
+    background: linear-gradient(180deg, #f0d88a 0%, #d8b254 45%, #a87f26 55%, #c59a3c 100%);
+    border: 1px solid var(--brass-edge);
+    padding: 8px 12px; border-radius: 999px; cursor: pointer;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.55),
+      inset 0 -2px 3px rgba(90,60,5,.45),
+      0 2px 4px rgba(0,0,0,.45);
+    text-shadow: 0 1px 0 rgba(255,246,214,.5);
+  }
+  .tb-btn:hover { filter: brightness(1.1); }
+  .tb-btn:active { transform: translateY(1px); box-shadow: inset 0 2px 4px rgba(90,60,5,.5), 0 1px 2px rgba(0,0,0,.4); }
+  .tb-btn:disabled { opacity: .4; cursor: default; filter: saturate(.4); }
+  select.tb-btn { appearance: none; -webkit-appearance: none; padding: 7px 11px; }
+  #modeSel option { background: #2a150a; color: #e9dcb8; }
+  .tb-stat { font-size: 11px; letter-spacing: 1.5px; color: #cdb98a; margin-left: 10px; white-space: nowrap; text-shadow: 0 1px 1px rgba(0,0,0,.6); }
+  .tb-stat b { color: #f4df9e; font-weight: 700; }
+  .tb-spacer { flex: 1; }
+  @media (max-width: 620px) {
+    .tb-title { display: none; }
+    .tb-stat.optional { display: none; }
+  }
+
+  /* ---------- Board ---------- */
+  #wrap { position: fixed; left: 0; right: 0; bottom: 0; overflow: hidden; }
+  #board {
+    position: absolute; width: 842px; height: 830px;
+    transform-origin: 0 0; touch-action: none;
+  }
+
+  /* engraved outlines for empty slots, free cells and foundations */
+  .base {
+    position: absolute; width: 100px; height: 140px;
+    border-radius: 10px;
+    border: 1px solid rgba(8, 24, 13, .55);
+    background: radial-gradient(85% 75% at 50% 34%, rgba(0,0,0,.14), rgba(0,0,0,.3));
+    box-shadow:
+      inset 0 0 0 1px rgba(0,0,0,.28),
+      inset 0 0 0 2px rgba(255,255,255,.05),
+      inset 0 3px 10px rgba(0,0,0,.4),
+      0 1px 0 rgba(255,255,255,.07);
+    display: flex; align-items: center; justify-content: center;
+    color: rgba(8, 26, 14, .6);
+    font: 700 12px Georgia, serif; letter-spacing: 2px;
+    text-align: center;
+    text-shadow: 0 1px 0 rgba(255,255,255,.09);
+  }
+  /* embossed suit / rank watermarks */
+  .base .glyph {
+    font-size: 48px; font-family: Georgia, serif;
+    color: rgba(5, 20, 11, .48);
+    text-shadow: 0 1px 0 rgba(255,255,255,.1), 0 -1px 2px rgba(0,0,0,.4);
+  }
+  .base.hint {
+    border-color: var(--gold-bright);
+    box-shadow: 0 0 0 3px rgba(236,210,138,.5), inset 0 0 20px rgba(236,210,138,.28);
+    color: rgba(244,223,158,.95);
+  }
+  .base.hint .glyph { color: rgba(244,223,158,.75); text-shadow: none; }
+
+  /* ---------- Cards ---------- */
+  .card {
+    position: absolute; width: 100px; height: 140px;
+    border-radius: 9px; cursor: pointer;
+    transition:
+      left .3s cubic-bezier(.25, 1.25, .4, 1),
+      top .3s cubic-bezier(.25, 1.25, .4, 1),
+      transform .2s ease, filter .2s ease;
+  }
+  .card * { pointer-events: none; }
+  #board.noanim .card { transition: none; }
+  #board.noanim .card .in { transition: none; }
+  /* lifted while dragging: scale up + deep layered drop shadow */
+  .card.drag {
+    transition: transform .15s ease, filter .15s ease;
+    transform: scale(1.045);
+    filter: drop-shadow(0 16px 22px rgba(0,0,0,.5)) drop-shadow(0 4px 8px rgba(0,0,0,.35));
+  }
+
+  .card .in {
+    position: absolute; inset: 0; border-radius: 9px;
+    transform-style: preserve-3d;
+    transition: transform .4s cubic-bezier(.33, .85, .3, 1);
+  }
+  .card.down .in { transform: rotateY(180deg); }
+  .face {
+    position: absolute; inset: 0; border-radius: 9px;
+    backface-visibility: hidden; -webkit-backface-visibility: hidden;
+    box-shadow: 0 1px 1px rgba(0,0,0,.3), 0 4px 10px rgba(0,0,0,.26);
+  }
+  .front {
+    background: linear-gradient(145deg, #fffdf6 0%, #f7f2e3 55%, #efe8d4 100%);
+    border: 1px solid #c8bfa4;
+    font-family: var(--card-serif);
+  }
+  /* two-tone oxblood & gold guilloche back */
+  .back {
+    transform: rotateY(180deg);
+    background:
+      radial-gradient(95px 130px at 50% 50%, rgba(236,210,138,.16), rgba(236,210,138,0) 72%),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='26'%3E%3Cg fill='none' stroke='%23d3a93c' stroke-width='.9' opacity='.5'%3E%3Ccircle cx='13' cy='13' r='8.5'/%3E%3Ccircle cx='0' cy='0' r='8.5'/%3E%3Ccircle cx='26' cy='0' r='8.5'/%3E%3Ccircle cx='0' cy='26' r='8.5'/%3E%3Ccircle cx='26' cy='26' r='8.5'/%3E%3C/g%3E%3Ccircle cx='13' cy='13' r='1.4' fill='%23d3a93c' opacity='.6'/%3E%3C/svg%3E"),
+      linear-gradient(135deg, #5c1724 0%, #471019 55%, #320a12 100%);
+    border: 4px solid #efe7d2;
+    box-shadow:
+      inset 0 0 0 1.5px #b58a2e,
+      0 1px 1px rgba(0,0,0,.3), 0 4px 10px rgba(0,0,0,.26);
+  }
+  .card.red .front { color: var(--crimson); }
+  .card.black .front { color: var(--ink); }
+
+  .corner {
+    position: absolute; display: flex; flex-direction: column;
+    align-items: center; line-height: .95; font-weight: 700;
+  }
+  .corner .r { font-size: 22px; font-family: var(--card-serif); }
+  .corner .s { font-size: 15px; margin-top: 1px; }
+  .tl { top: 6px; left: 6px; }
+  .br { bottom: 6px; right: 6px; transform: rotate(180deg); }
+
+  /* traditional pip layouts */
+  .pips { position: absolute; left: 27px; right: 27px; top: 22px; bottom: 22px; }
+  .pip {
+    position: absolute; font-size: 22px; line-height: 1;
+    transform: translate(-50%, -50%);
+    text-shadow: 0 1px 0 rgba(0,0,0,.08);
+  }
+  .pip.f { transform: translate(-50%, -50%) rotate(180deg); }
+  .pips.few .pip { font-size: 30px; }
+
+  /* aces: large pip inside an engraved gold ring */
+  .big {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 56px;
+  }
+  .big .ring {
+    position: absolute; left: 50%; top: 50%; width: 76px; height: 76px;
+    transform: translate(-50%, -50%);
+    border: 1px solid rgba(181,138,46,.55); border-radius: 50%;
+  }
+  .big .ring::after {
+    content: ""; position: absolute; inset: 4px;
+    border: 1px solid rgba(181,138,46,.3); border-radius: 50%;
+  }
+  .big .ag { position: relative; text-shadow: 0 1px 1px rgba(0,0,0,.15); }
+
+  /* court / ace-of-spades inline-SVG plates */
+  .court {
+    position: absolute; left: 50%; top: 50%;
+    width: 72px; height: 108px;
+    transform: translate(-50%, -50%);
+  }
+
+  .card.hint .front {
+    box-shadow: 0 0 0 3px rgba(236,210,138,.9), 0 4px 12px rgba(0,0,0,.4);
+  }
+
+  /* ---------- Auto-complete button : brass plaque ---------- */
+  #autoBtn {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    z-index: 950;
+    font: 700 13px/1 Georgia, serif; letter-spacing: 3px;
+    color: #2b1d06;
+    background: linear-gradient(180deg, #f0d88a 0%, #d8b254 45%, #a87f26 55%, #c59a3c 100%);
+    border: 1px solid var(--brass-edge);
+    padding: 14px 26px; border-radius: 999px;
+    cursor: pointer;
+    text-shadow: 0 1px 0 rgba(255,246,214,.5);
+    animation: brassPulse 1.8s ease-in-out infinite;
+  }
+  @keyframes brassPulse {
+    0%, 100% {
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.55), inset 0 -2px 3px rgba(90,60,5,.45),
+        0 6px 18px rgba(0,0,0,.5), 0 0 14px rgba(236,210,138,.25);
+    }
+    50% {
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.55), inset 0 -2px 3px rgba(90,60,5,.45),
+        0 6px 18px rgba(0,0,0,.5), 0 0 32px rgba(236,210,138,.55);
+    }
+  }
+  #autoBtn:hover { filter: brightness(1.07); }
+  .hidden { display: none !important; }
+
+  /* ---------- Celebration canvas + gold shimmer overlay ---------- */
+  #fx { position: fixed; inset: 0; z-index: 960; pointer-events: none; display: none; }
+  #shimmer {
+    position: fixed; inset: 0; z-index: 965; pointer-events: none; display: none;
+    background: linear-gradient(115deg,
+      rgba(255,223,128,0) 30%, rgba(255,223,128,.07) 42%,
+      rgba(255,240,190,.22) 50%,
+      rgba(255,223,128,.07) 58%, rgba(255,223,128,0) 70%);
+    background-size: 300% 100%;
+    mix-blend-mode: screen;
+    animation: shimmerSweep 2.8s linear infinite;
+  }
+  @keyframes shimmerSweep {
+    0% { background-position: 100% 0; }
+    100% { background-position: 0% 0; }
+  }
+
+  /* ---------- Win overlay : leather & gold plaque ---------- */
+  #winOverlay {
+    position: fixed; inset: 0; z-index: 980;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+  }
+  #winPanel {
+    pointer-events: auto;
+    background:
+      radial-gradient(130% 100% at 50% 0%, rgba(236,210,138,.08), rgba(236,210,138,0) 55%),
+      linear-gradient(160deg, #241509 0%, #150b04 100%);
+    border: 1px solid #b58a2e; border-radius: 14px;
+    padding: 28px 42px; text-align: center; color: #e9dcb8;
+    box-shadow:
+      0 0 0 4px rgba(18, 10, 4, .92),
+      0 0 0 5px rgba(181, 138, 46, .5),
+      0 18px 60px rgba(0,0,0,.7);
+    font-family: Georgia, serif;
+  }
+  #winPanel h1 {
+    margin: 0 0 14px; font-size: 28px; letter-spacing: 6px;
+    font-family: var(--card-serif); color: #f0d88a;
+    text-shadow: 0 2px 6px rgba(0,0,0,.8), 0 0 18px rgba(236,210,138,.35);
+  }
+  #winPanel .stat {
+    font-size: 13px; letter-spacing: 1.5px; margin: 5px 0; color: #cdb98a;
+  }
+  #winPanel .stat b { color: #f4df9e; }
+  #winPanel .row { margin-top: 20px; display: flex; gap: 10px; justify-content: center; }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <span class="tb-title">SOLITAIRE</span>
+  <select class="tb-btn" id="modeSel" aria-label="Game mode">
+    <option value="klondike">KLONDIKE</option>
+    <option value="spider1">SPIDER 1-SUIT</option>
+    <option value="spider2">SPIDER 2-SUIT</option>
+    <option value="freecell">FREECELL</option>
+  </select>
+  <button class="tb-btn" id="newBtn">NEW</button>
+  <button class="tb-btn" id="dailyBtn" title="Today's seeded Klondike deal — same for everyone">DAILY</button>
+  <button class="tb-btn" id="restartBtn">RESTART</button>
+  <button class="tb-btn" id="undoBtn" disabled>UNDO</button>
+  <button class="tb-btn" id="drawBtn">DRAW 1</button>
+  <span class="tb-spacer"></span>
+  <span class="tb-stat">MOVES <b id="movesEl">0</b></span>
+  <span class="tb-stat">TIME <b id="timeEl">0:00</b></span>
+  <span class="tb-stat optional">WINS <b id="winsEl">0</b></span>
+  <span class="tb-stat optional">BEST <b id="bestEl">--</b></span>
+</div>
+
+<div id="wrap"><div id="board"></div></div>
+
+<button id="autoBtn" class="hidden">AUTO COMPLETE</button>
+<canvas id="fx"></canvas>
+<div id="shimmer"></div>
+
+<div id="winOverlay" class="hidden">
+  <div id="winPanel">
+    <h1>YOU WIN</h1>
+    <div class="stat">TIME <b id="wTime">0:00</b></div>
+    <div class="stat">MOVES <b id="wMoves">0</b></div>
+    <div class="stat">BEST TIME <b id="wBest">--</b></div>
+    <div class="stat">TOTAL WINS <b id="wWins">0</b></div>
+    <div class="row">
+      <button class="tb-btn" id="wNewBtn">NEW DEAL</button>
+      <button class="tb-btn" id="wReplayBtn">REPLAY DEAL</button>
+    </div>
+  </div>
+</div>
+
+<!-- arcade-shared:start -->
+<script>
+/* Arcade shared runtime.
+   Single source of truth for cross-game boilerplate. build-arcade.py injects
+   this into every game between the arcade-shared markers (and keeps the copies
+   in sync on each run) — edit THIS file, then run: python3 build-arcade.py */
+(function () {
+  "use strict";
+
+  /* ---- safe storage: never throws (Safari private mode, disabled storage) ---- */
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, String(v)); return true; } catch (e) { return false; } },
+    remove: function (k) { try { localStorage.removeItem(k); } catch (e) {} },
+    num: function (k) { var n = parseFloat(store.get(k)); return isFinite(n) ? n : 0; },
+    json: function (k) { try { return JSON.parse(store.get(k)); } catch (e) { return null; } }
+  };
+
+  /* ---- audio: one wrap of the AudioContext constructor gives us both
+     a tab-hidden auto-suspend and an arcade-wide master volume ----
+     Every context's .destination is rerouted through a shared gain node, so
+     the settings panel's master volume applies to every game with no per-game
+     wiring; the games' own volume sliders keep working underneath it.
+     Only contexts *we* suspended are resumed, so a game's own
+     mute-by-suspend behaviour is left alone. */
+  var contexts = [];
+  var autoSuspended = [];
+  var masters = [];
+  function masterLevel() {
+    if (store.get("arcade_master_muted") === "1") return 0;
+    var v = parseFloat(store.get("arcade_master"));
+    return isFinite(v) ? Math.min(Math.max(v, 0), 1) : 1;
+  }
+  function applyMaster() {
+    var lvl = masterLevel();
+    masters.forEach(function (g) {
+      try { g.gain.setTargetAtTime(lvl, g.context.currentTime, 0.02); } catch (e) {}
+    });
+  }
+  ["AudioContext", "webkitAudioContext"].forEach(function (name) {
+    var Orig = window[name];
+    if (!Orig) return;
+    function Patched() {
+      var ctx = arguments.length
+        ? new (Function.prototype.bind.apply(Orig, [null].concat([].slice.call(arguments))))()
+        : new Orig();
+      contexts.push(ctx);
+      try {
+        var realDest = ctx.destination;
+        var master = ctx.createGain();
+        master.gain.value = masterLevel();
+        master.connect(realDest);
+        Object.defineProperty(ctx, "destination", {
+          get: function () { return master; },
+          configurable: true
+        });
+        masters.push(master);
+      } catch (e) { /* master volume is best-effort */ }
+      return ctx;
+    }
+    Patched.prototype = Orig.prototype;
+    window[name] = Patched;
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      contexts.forEach(function (ctx) {
+        if (ctx.state === "running") {
+          autoSuspended.push(ctx);
+          ctx.suspend().catch(function () {});
+        }
+      });
+    } else {
+      autoSuspended.splice(0).forEach(function (ctx) {
+        if (ctx.state === "suspended") ctx.resume().catch(function () {});
+      });
+    }
+  });
+
+  /* ---- reduced motion: tame decorative CSS animation, expose a flag the
+     games consult for canvas effects (shake, flashes, particles). The OS
+     setting is the default; the settings panel can override it either way
+     (arcade_rm: "auto" | "on" | "off"). ---- */
+  var rmQuery = window.matchMedia ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+  function reducedMotion() {
+    var o = store.get("arcade_rm");
+    if (o === "on") return true;
+    if (o === "off") return false;
+    return !!(rmQuery && rmQuery.matches);
+  }
+  var rmStyle = document.createElement("style");
+  (document.head || document.documentElement).appendChild(rmStyle);
+  function syncRMStyle() {
+    rmStyle.textContent = reducedMotion()
+      ? "*,*::before,*::after{animation-duration:.01ms !important;" +
+        "animation-iteration-count:1 !important;transition-duration:.01ms !important;" +
+        "scroll-behavior:auto !important}"
+      : "";
+  }
+  syncRMStyle();
+  if (rmQuery && rmQuery.addEventListener) rmQuery.addEventListener("change", syncRMStyle);
+
+  /* ---- on-screen touch controls ----
+     Created on demand by a game calling arcade.touch.* at the end of its own
+     script. Nothing is shown unless the pointer is coarse (or ?touch=1 forces
+     them for testing). Key buttons synthesize keydown/keyup on window+document
+     with both .key and .code set, so games keep their existing handlers. */
+  var touchOn = (window.matchMedia && matchMedia("(pointer: coarse)").matches) ||
+                /[?&]touch=1\b/.test(location.search);
+  var touchLayer = null;
+  function ensureLayer() {
+    if (!touchLayer) {
+      touchLayer = document.createElement("div");
+      touchLayer.id = "arcade-touch";
+      touchLayer.style.cssText =
+        "position:fixed;inset:0;z-index:15000;pointer-events:none;" +
+        "user-select:none;-webkit-user-select:none";
+      (document.body || document.documentElement).appendChild(touchLayer);
+    }
+    return touchLayer;
+  }
+  function mkEl(style, size) {
+    var el = document.createElement("div");
+    el.style.cssText =
+      "position:absolute;pointer-events:auto;touch-action:none;box-sizing:border-box;" +
+      "width:" + size + "px;height:" + size + "px;border-radius:50%;" +
+      "background:rgba(140,160,210,.13);border:1px solid rgba(140,160,210,.45);" +
+      "color:rgba(232,236,248,.85);display:flex;align-items:center;justify-content:center;" +
+      "font:700 13px/1 system-ui,sans-serif;letter-spacing:1px;" + (style || "");
+    return el;
+  }
+  function sendKey(type, key, code) {
+    var ev = new KeyboardEvent(type, { key: key, code: code, bubbles: true, cancelable: true });
+    window.dispatchEvent(ev);
+    document.dispatchEvent(ev);
+  }
+  function touchButton(o) {
+    if (!touchOn) return null;
+    var el = mkEl(o.style, o.size || 54);
+    el.textContent = o.label || "";
+    if (o.label) el.dataset.k = o.label;
+    var timer = 0;
+    function down(e) {
+      e.preventDefault();
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
+      el.style.background = "rgba(140,160,210,.34)";
+      if (o.onDown) o.onDown();
+      if (o.repeat) timer = setInterval(function () { if (o.onDown) o.onDown(); }, o.repeat);
+    }
+    function up() {
+      el.style.background = "rgba(140,160,210,.13)";
+      if (timer) { clearInterval(timer); timer = 0; }
+      if (o.onUp) o.onUp();
+    }
+    el.addEventListener("pointerdown", down);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+    ensureLayer().appendChild(el);
+    return el;
+  }
+  function keyButton(o) {
+    var held = false;
+    return touchButton({
+      label: o.label, style: o.style, size: o.size, repeat: o.repeat,
+      onDown: function () { held = true; sendKey("keydown", o.key, o.code || o.key); },
+      onUp: function () { if (held) { held = false; sendKey("keyup", o.key, o.code || o.key); } }
+    });
+  }
+  function dpad(o) {
+    if (!touchOn) return;
+    var s = o.size || 52, g = o.gap || 6;
+    var bx = o.left != null ? o.left : 16, by = o.bottom != null ? o.bottom : 16;
+    function at(cx, cy) { return "left:" + cx + "px;bottom:" + cy + "px"; }
+    var m = o.map;
+    keyButton({ label: "▲", key: m.up.key, code: m.up.code, size: s, repeat: o.repeat, style: at(bx + s + g, by + 2 * (s + g)) });
+    keyButton({ label: "◀", key: m.left.key, code: m.left.code, size: s, repeat: o.repeat, style: at(bx, by + s + g) });
+    keyButton({ label: "▶", key: m.right.key, code: m.right.code, size: s, repeat: o.repeat, style: at(bx + 2 * (s + g), by + s + g) });
+    keyButton({ label: "▼", key: m.down.key, code: m.down.code, size: s, repeat: o.repeat, style: at(bx + s + g, by) });
+  }
+  function arrowDpad(o) {
+    o = o || {};
+    o.map = {
+      up: { key: "ArrowUp", code: "ArrowUp" }, down: { key: "ArrowDown", code: "ArrowDown" },
+      left: { key: "ArrowLeft", code: "ArrowLeft" }, right: { key: "ArrowRight", code: "ArrowRight" }
+    };
+    return dpad(o);
+  }
+  function stick(o) {
+    if (!touchOn) return null;
+    var size = o.size || 124;
+    var base = mkEl(o.style, size);
+    if (o.label) base.dataset.k = o.label;
+    var knob = document.createElement("div");
+    knob.style.cssText =
+      "position:absolute;width:44%;height:44%;border-radius:50%;pointer-events:none;" +
+      "background:rgba(140,160,210,.4);left:50%;top:50%;transform:translate(-50%,-50%)";
+    base.appendChild(knob);
+    var active = false;
+    function setKnob(nx, ny) {
+      knob.style.left = (50 + nx * 32) + "%";
+      knob.style.top = (50 + ny * 32) + "%";
+    }
+    function report(e) {
+      var r = base.getBoundingClientRect();
+      var dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+      var dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+      var mag = Math.hypot(dx, dy);
+      if (mag > 1) { dx /= mag; dy /= mag; }
+      setKnob(dx, dy);
+      if (o.onMove) o.onMove(dx, dy, true);
+    }
+    base.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      try { base.setPointerCapture(e.pointerId); } catch (err) {}
+      active = true;
+      report(e);
+    });
+    base.addEventListener("pointermove", function (e) { if (active) report(e); });
+    function end() {
+      if (!active) return;
+      active = false;
+      setKnob(0, 0);
+      if (o.onMove) o.onMove(0, 0, false);
+    }
+    base.addEventListener("pointerup", end);
+    base.addEventListener("pointercancel", end);
+    ensureLayer().appendChild(base);
+    return base;
+  }
+
+  /* ---- play-time heartbeat: the hub sorts and labels cards from this ----
+     Standalone pages identify themselves by filename; inside the all-in-one
+     bundle the overlay stamps data-arcade-game on the iframe. The smoke
+     harness's srcdoc frames carry no stamp, so test runs never pollute it. */
+  var GAME_ID = (function () {
+    try {
+      if (window.frameElement && window.frameElement.dataset.arcadeGame)
+        return window.frameElement.dataset.arcadeGame;
+      if (window.frameElement) return null; /* unstamped frame (smoke harness) */
+    } catch (e) { return null; }
+    var p = location.pathname.split("/").pop();
+    return /\.html$/.test(p) && ["index.html", "arcade.html", "smoke.html"].indexOf(p) === -1 ? p : null;
+  })();
+  if (GAME_ID) {
+    var visSince = document.hidden ? 0 : Date.now();
+    var metaFlush = function () {
+      var add = 0, now = Date.now();
+      if (visSince) { add = (now - visSince) / 1000; visSince = document.hidden ? 0 : now; }
+      else if (add === 0) return; /* hidden and idle: not "playing" */
+      var meta = store.json("arcade_meta_v1") || {};
+      var g = meta[GAME_ID] || (meta[GAME_ID] = { secs: 0 });
+      g.secs = Math.round((g.secs || 0) + add);
+      g.last = now;
+      store.set("arcade_meta_v1", JSON.stringify(meta));
+    };
+    metaFlush();
+    setInterval(metaFlush, 15000);
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { metaFlush(); visSince = 0; }
+      else visSince = Date.now();
+    });
+    window.addEventListener("pagehide", metaFlush);
+  }
+
+  /* ---- settings panel: gear chip on the right edge; Escape closes.
+     Master volume and motion apply to every game through the shared
+     runtime, so this is the same panel with the same behaviour everywhere. */
+  var panel = null, chip = null;
+  function settingsOpen() { return !!(panel && panel.style.display !== "none"); }
+  function motionLabel() {
+    var o = store.get("arcade_rm");
+    return o === "on" ? "MOTION: REDUCED" : o === "off" ? "MOTION: FULL" : "MOTION: AUTO";
+  }
+  function buildPanel() {
+    if (panel) return;
+    panel = document.createElement("div");
+    panel.id = "arcade-settings";
+    panel.style.cssText =
+      "position:fixed;inset:0;z-index:16000;display:none;" +
+      "background:rgba(4,6,12,.55);user-select:none;-webkit-user-select:none";
+    var card = document.createElement("div");
+    card.style.cssText =
+      "position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);" +
+      "min-width:260px;padding:22px 26px;border-radius:14px;" +
+      "background:rgba(14,17,30,.96);border:1px solid rgba(140,160,210,.4);" +
+      "color:#e8ecf8;font:13px/1.5 system-ui,sans-serif";
+    card.innerHTML =
+      '<div style="font:700 13px/1 system-ui;letter-spacing:3px;margin-bottom:16px">ARCADE SETTINGS</div>' +
+      '<label style="font-size:11px;letter-spacing:2px;color:#8b94b0">MASTER VOLUME</label><br>' +
+      '<input id="arc-set-vol" type="range" min="0" max="100" style="width:100%;margin:6px 0 14px">' +
+      '<button id="arc-set-mute" style="' + btnCss() + '"></button> ' +
+      '<button id="arc-set-rm" style="' + btnCss() + '"></button>' +
+      '<div style="font-size:11px;color:#8b94b0;margin-top:14px">Applies to every game. ' +
+      'Per-game volume controls still work underneath.<br>Esc closes.</div>';
+    panel.appendChild(card);
+    panel.addEventListener("pointerdown", function (e) { if (e.target === panel) toggleSettings(false); });
+    (document.body || document.documentElement).appendChild(panel);
+
+    var vol = card.querySelector("#arc-set-vol");
+    var mute = card.querySelector("#arc-set-mute");
+    var rm = card.querySelector("#arc-set-rm");
+    function syncUI() {
+      var v = parseFloat(store.get("arcade_master"));
+      vol.value = Math.round((isFinite(v) ? Math.min(Math.max(v, 0), 1) : 1) * 100);
+      mute.textContent = store.get("arcade_master_muted") === "1" ? "UNMUTE" : "MUTE";
+      rm.textContent = motionLabel();
+    }
+    vol.addEventListener("input", function () {
+      store.set("arcade_master", vol.value / 100);
+      store.set("arcade_master_muted", "0");
+      applyMaster(); syncUI();
+    });
+    mute.addEventListener("click", function () {
+      store.set("arcade_master_muted", store.get("arcade_master_muted") === "1" ? "0" : "1");
+      applyMaster(); syncUI();
+    });
+    rm.addEventListener("click", function () {
+      var o = store.get("arcade_rm");
+      store.set("arcade_rm", o === "on" ? "off" : o === "off" ? "auto" : "on");
+      syncRMStyle(); syncUI();
+    });
+    panel.syncUI = syncUI;
+  }
+  function btnCss() {
+    return "font:700 11px/1 system-ui;letter-spacing:2px;color:#cfd8ea;cursor:pointer;" +
+      "background:rgba(140,160,210,.12);border:1px solid rgba(140,160,210,.4);" +
+      "padding:8px 12px;border-radius:999px";
+  }
+  function toggleSettings(show) {
+    buildPanel();
+    var to = show != null ? show : !settingsOpen();
+    panel.style.display = to ? "block" : "none";
+    if (to) panel.syncUI();
+  }
+  function mountChip() {
+    if (chip || !document.body) return;
+    chip = document.createElement("div");
+    chip.id = "arcade-settings-chip";
+    chip.title = "Arcade settings";
+    chip.textContent = "⚙";
+    chip.style.cssText =
+      "position:fixed;right:8px;top:50%;transform:translateY(-50%);z-index:15990;" +
+      "width:30px;height:30px;border-radius:50%;display:flex;align-items:center;" +
+      "justify-content:center;cursor:pointer;font-size:15px;color:#cfd8ea;" +
+      "background:rgba(10,12,20,.6);border:1px solid rgba(140,160,210,.35);" +
+      "opacity:.4;transition:opacity .15s;user-select:none;-webkit-user-select:none";
+    chip.addEventListener("mouseenter", function () { chip.style.opacity = "1"; });
+    chip.addEventListener("mouseleave", function () { chip.style.opacity = ".4"; });
+    chip.addEventListener("click", function () { toggleSettings(); });
+    document.body.appendChild(chip);
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", mountChip);
+  } else {
+    mountChip();
+  }
+  /* capture-phase: while the panel is open, keys belong to the panel */
+  window.addEventListener("keydown", function (e) {
+    if (!settingsOpen()) return;
+    if (e.key === "Escape") toggleSettings(false);
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  }, true);
+  window.addEventListener("keyup", function (e) {
+    if (settingsOpen()) e.stopImmediatePropagation();
+  }, true);
+
+  window.arcade = {
+    store: store,
+    reducedMotion: reducedMotion,
+    settings: { open: function () { toggleSettings(true); }, close: function () { toggleSettings(false); } },
+    /* clamp a rAF delta so a backgrounded tab doesn't produce a huge step */
+    clampDt: function (dt, max) { return Math.min(Math.max(dt, 0), max || 0.1); },
+    /* daily-challenge helpers: one date key and one seed, stable all day,
+       shared by every game so "today's run" means the same thing everywhere */
+    dailyKey: function () {
+      var d = new Date(), m = d.getMonth() + 1, da = d.getDate();
+      return d.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (da < 10 ? "0" : "") + da;
+    },
+    dailySeed: function () {
+      var d = new Date();
+      return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+    },
+    /* mulberry32: tiny deterministic PRNG for seeded runs */
+    seededRand: function (seed) {
+      var a = seed >>> 0;
+      return function () {
+        a = (a + 0x6D2B79F5) >>> 0;
+        var t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    },
+    touch: {
+      available: touchOn,
+      sendKey: sendKey,
+      button: touchButton,
+      key: keyButton,
+      dpad: dpad,
+      arrowDpad: arrowDpad,
+      stick: stick
+    },
+    /* Run recorder — shared by the ghost racer and replay trophies.
+
+       A game calls start()/sample()/finish() and gets both a local ghost and,
+       when the arcade server happens to be serving the page, a shared one.
+       Every server call is best-effort: these games are static files that must
+       keep working opened straight off the disk, so a failed fetch is silently
+       ignored rather than surfaced. */
+    run: (function () {
+      var RATE_MS = 100;            // 10 Hz is plenty to interpolate a ghost
+      var MAX_FRAMES = 4000;        // ~6.5 minutes; matches the server cap
+      var cur = null;
+
+      function localKey(game) { return 'arcade_ghost_' + game; }
+
+      function post(path, body) {
+        try {
+          return fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' },
+                               body: JSON.stringify(body) })
+            .then(function (r) { return r.json(); })
+            .catch(function () { return null; });
+        } catch (e) { return Promise.resolve(null); }
+      }
+
+      return {
+        start: function (game, seed) {
+          cur = { game: game, seed: seed === undefined ? null : seed, frames: [], last: -1e9 };
+        },
+        /* Call every frame; it throttles itself. Pass the few numbers needed to
+           redraw the ghost — position, lane, whatever the game interpolates. */
+        sample: function (t) {
+          if (!cur || cur.frames.length >= MAX_FRAMES) return;
+          if (t - cur.last < RATE_MS / 1000) return;
+          cur.last = t;
+          cur.frames.push(Array.prototype.slice.call(arguments, 1).map(function (v) {
+            return Math.round((Number(v) || 0) * 100) / 100;   // 2dp keeps ghosts small
+          }));
+        },
+        recording: function () { return !!cur; },
+        /* Keep the run if it beat the stored ghost, and offer it to the server. */
+        finish: function (score, name) {
+          if (!cur || !cur.frames.length) { cur = null; return Promise.resolve(null); }
+          var ghost = { game: cur.game, seed: cur.seed, frames: cur.frames,
+                        score: Number(score) || 0,
+                        name: name || localStorage.getItem('arcade_name_v1') || 'player' };
+          cur = null;
+          try {
+            var prevRaw = localStorage.getItem(localKey(ghost.game));
+            var prev = prevRaw ? JSON.parse(prevRaw) : null;
+            if (!prev || ghost.score > prev.score) {
+              localStorage.setItem(localKey(ghost.game), JSON.stringify(ghost));
+            }
+          } catch (e) { /* quota or bad JSON — the server copy still matters */ }
+          return post('/api/ghost', ghost);
+        },
+        discard: function () { cur = null; },
+        /* Best available ghost: the server's if reachable, else the local one. */
+        best: function (game) {
+          var local = null;
+          try {
+            var raw = localStorage.getItem(localKey(game));
+            if (raw) local = JSON.parse(raw);
+          } catch (e) {}
+          try {
+            return fetch('/api/ghosts?game=' + encodeURIComponent(game))
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                var remote = d && d.list && d.list[0];
+                if (remote && (!local || remote.score > local.score)) return remote;
+                return local;
+              })
+              .catch(function () { return local; });
+          } catch (e) { return Promise.resolve(local); }
+        },
+        /* Read a ghost at an arbitrary time, interpolating between samples. */
+        at: function (ghost, t) {
+          if (!ghost || !ghost.frames || !ghost.frames.length) return null;
+          var f = ghost.frames, i = Math.floor(t / (RATE_MS / 1000));
+          if (i >= f.length - 1) return f[f.length - 1];
+          if (i < 0) return f[0];
+          var a = f[i], b = f[i + 1], k = (t / (RATE_MS / 1000)) - i, out = [];
+          for (var j = 0; j < a.length; j++) out.push(a[j] + (b[j] - a[j]) * k);
+          return out;
+        }
+      };
+    })()
+  };
+})();
+</script>
+<!-- arcade-shared:end -->
+<script>
+"use strict";
+(function () {
+
+  /* ---------- Constants ---------- */
+  var SUIT = ["♠", "♥", "♦", "♣"]; /* spade heart diamond club */
+  var RED  = [false, true, true, false];
+  var RLAB = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+  var CW = 100, CH = 140;
+  var MX = 20, TOPY = 18, TY = 186;
+  var FAN = 26;                 /* waste fan offset */
+  var OFF_DOWN = 14, OFF_UP = 30;
+
+  /* ---------- Modes ----------
+     klondike : classic, 7 cols, stock/waste, 4 foundations (records: sol_*)
+     spider1  : spider one suit, 10 cols, 104 cards     (records: spider_*)
+     spider2  : spider two suits, 10 cols, 104 cards    (records: spider_*)
+     freecell : 8 cols, 4 free cells, 4 foundations     (records: freecell_*)
+  */
+  var MODE_CONF = {
+    klondike: { cols: 7,  pitch: 117, dw: 842,  dh: 830, prefix: "sol" },
+    spider1:  { cols: 10, pitch: 106, dw: 1094, dh: 880, prefix: "spider" },
+    spider2:  { cols: 10, pitch: 106, dw: 1094, dh: 880, prefix: "spider" },
+    freecell: { cols: 8,  pitch: 108, dw: 896,  dh: 830, prefix: "freecell" }
+  };
+  var mode = "klondike", fam = "klondike"; /* fam: klondike | spider | freecell */
+  var COLS = 7, PITCH = 117, DW = 842, DH = 830, WX = MX + 117;
+
+  function TX(i) { return MX + i * PITCH; }
+  function FX(i) { return fam === "freecell" ? MX + (4 + i) * PITCH : MX + (3 + i) * PITCH; }
+  function CLX(i) { return MX + i * PITCH; }        /* freecell cells */
+  function DNX(i) { return MX + (2 + i) * PITCH; }  /* spider done piles */
+
+  /* ---------- DOM ---------- */
+  var board = document.getElementById("board");
+  var wrap = document.getElementById("wrap");
+  var toolbar = document.getElementById("toolbar");
+  var movesEl = document.getElementById("movesEl");
+  var timeEl = document.getElementById("timeEl");
+  var winsEl = document.getElementById("winsEl");
+  var bestEl = document.getElementById("bestEl");
+  var undoBtn = document.getElementById("undoBtn");
+  var drawBtn = document.getElementById("drawBtn");
+  var modeSel = document.getElementById("modeSel");
+  var autoBtn = document.getElementById("autoBtn");
+  var fx = document.getElementById("fx");
+  var shimmer = document.getElementById("shimmer");
+  var winOverlay = document.getElementById("winOverlay");
+
+  /* ---------- Storage ---------- */
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, String(v)); } catch (e) {} }
+  function winsKey() { return MODE_CONF[mode].prefix + "_wins"; }
+  function bestKey() { return MODE_CONF[mode].prefix + "_best_time"; }
+  function getWins() { var n = parseInt(lsGet(winsKey()) || "0", 10); return isNaN(n) ? 0 : n; }
+  function getBest() { var n = parseInt(lsGet(bestKey()) || "", 10); return isNaN(n) ? null : n; }
+
+  /* ---------- State ---------- */
+  var cards = [];                       /* card objects by id (52 or 104) */
+  var stock = [], waste = [];
+  var found = [[], [], [], []];         /* klondike / freecell foundations */
+  var cells = [[], [], [], []];         /* freecell free cells */
+  var done = [];                        /* spider completed K-A runs */
+  var tab = [];
+  var moves = 0, hist = [];
+  var deckOrder = null;
+  var draw3 = lsGet("sol_draw3") === "1";
+  var started = false, startTime = 0, timerInt = null;
+  var finalTime = 0;
+  var wonFlag = false, busy = false;
+  var lastMoved = [];
+  var S = 1;                            /* board scale */
+  var tapCard = -1, tapTime = 0;
+
+  /* ---------- Build bases + cards (per mode) ---------- */
+  var stockBase = null, wasteBase = null, foundBase = [], cellBase = [], doneBase = [], tabBase = [];
+  function mkBase(x, y, html) {
+    var d = document.createElement("div");
+    d.className = "base";
+    d.style.left = x + "px";
+    d.style.top = y + "px";
+    d.innerHTML = html;
+    board.appendChild(d);
+    return d;
+  }
+
+  /* ---------- Card face artwork (presentation only) ---------- */
+  var ART_GOLD = "#b58a2e", ART_GOLD_DK = "#8a6a1f";
+
+  /* traditional pip arrangements: [x%, y%, flipped] within the pip area */
+  var PIPS = {
+    2:  [[50,0,0],[50,100,1]],
+    3:  [[50,0,0],[50,50,0],[50,100,1]],
+    4:  [[0,0,0],[100,0,0],[0,100,1],[100,100,1]],
+    5:  [[0,0,0],[100,0,0],[50,50,0],[0,100,1],[100,100,1]],
+    6:  [[0,0,0],[100,0,0],[0,50,0],[100,50,0],[0,100,1],[100,100,1]],
+    7:  [[0,0,0],[100,0,0],[50,25,0],[0,50,0],[100,50,0],[0,100,1],[100,100,1]],
+    8:  [[0,0,0],[100,0,0],[50,25,0],[0,50,0],[100,50,0],[50,75,1],[0,100,1],[100,100,1]],
+    9:  [[0,0,0],[100,0,0],[0,33,0],[100,33,0],[50,50,0],[0,67,1],[100,67,1],[0,100,1],[100,100,1]],
+    10: [[0,0,0],[100,0,0],[50,17,0],[0,33,0],[100,33,0],[0,67,1],[100,67,1],[50,83,1],[0,100,1],[100,100,1]]
+  };
+
+  /* geometric art-deco court plates (J / Q / K), mirrored top & bottom */
+  function courtHTML(s, r) {
+    var col = RED[s] ? "#a92238" : "#23232e";
+    var su = SUIT[s];
+    function half(t) {
+      var h = "<g transform='" + t + "'>";
+      h += "<text x='7.5' y='14' font-size='8' font-family='Georgia,serif' fill='" + col + "'>" + su + "</text>";
+      if (r === 13) {        /* King: pointed crown + sword */
+        h += "<path d='M20 16 L22 5 L26.5 11 L30 3.5 L33.5 11 L38 5 L40 16 Z' fill='" + ART_GOLD + "' stroke='" + ART_GOLD_DK + "' stroke-width='.7'/>";
+        h += "<circle cx='22' cy='5' r='1.4' fill='" + col + "'/><circle cx='30' cy='3.5' r='1.4' fill='" + col + "'/><circle cx='38' cy='5' r='1.4' fill='" + col + "'/>";
+        h += "<path d='M50 6 L50 28 M47.5 10 H52.5' fill='none' stroke='" + ART_GOLD_DK + "' stroke-width='1.1'/>";
+      } else if (r === 12) { /* Queen: arched tiara + scepter */
+        h += "<path d='M21 16 Q30 1 39 16 Z' fill='" + ART_GOLD + "' stroke='" + ART_GOLD_DK + "' stroke-width='.7'/>";
+        h += "<circle cx='30' cy='7' r='1.9' fill='" + col + "'/><circle cx='24.5' cy='10.5' r='1.2' fill='" + col + "'/><circle cx='35.5' cy='10.5' r='1.2' fill='" + col + "'/>";
+        h += "<circle cx='50' cy='8' r='2.2' fill='none' stroke='" + ART_GOLD_DK + "' stroke-width='1'/><path d='M50 10.5 L50 28' fill='none' stroke='" + ART_GOLD_DK + "' stroke-width='1.1'/>";
+      } else {               /* Jack: slanted cap + feather */
+        h += "<path d='M21 16 L21 8.5 L39 12.5 L39 16 Z' fill='" + ART_GOLD + "' stroke='" + ART_GOLD_DK + "' stroke-width='.7'/>";
+        h += "<path d='M21 9 L13.5 3' fill='none' stroke='" + col + "' stroke-width='1.3'/><circle cx='13.5' cy='3' r='1.5' fill='" + col + "'/>";
+      }
+      /* faceted face + jewel */
+      h += "<polygon points='30,17 37.5,25.5 30,34 22.5,25.5' fill='#f3ead2' stroke='" + col + "' stroke-width='1'/>";
+      h += "<circle cx='30' cy='25.5' r='1.8' fill='" + col + "'/>";
+      /* chevroned robe with gold trim */
+      h += "<path d='M14 44 L19 31 L25 35.5 L30 32 L35 35.5 L41 31 L46 44 Z' fill='" + col + "'/>";
+      h += "<path d='M19 40.5 L30 36.5 L41 40.5' fill='none' stroke='" + ART_GOLD + "' stroke-width='1'/>";
+      h += "<path d='M22.5 44 L30 41 L37.5 44' fill='none' stroke='" + ART_GOLD + "' stroke-width='1'/>";
+      h += "</g>";
+      return h;
+    }
+    return "<svg class='court' viewBox='0 0 60 90' xmlns='http://www.w3.org/2000/svg' preserveAspectRatio='xMidYMid meet'>" +
+      "<rect x='1' y='1' width='58' height='88' rx='4' fill='#f8f3e3' stroke='" + ART_GOLD + "' stroke-width='1'/>" +
+      "<rect x='3.2' y='3.2' width='53.6' height='83.6' rx='2.5' fill='none' stroke='" + col + "' stroke-width='.5' opacity='.45'/>" +
+      half("") + half("rotate(180 30 45)") +
+      "<path d='M8 45 H52' stroke='" + ART_GOLD + "' stroke-width='.7' opacity='.8'/>" +
+      "<rect x='27.8' y='42.8' width='4.4' height='4.4' transform='rotate(45 30 45)' fill='" + ART_GOLD + "'/>" +
+      "</svg>";
+  }
+
+  /* decorative large-pip ace of spades */
+  function aceSpadeHTML() {
+    return "<svg class='court' viewBox='0 0 60 90' xmlns='http://www.w3.org/2000/svg' preserveAspectRatio='xMidYMid meet'>" +
+      "<rect x='1' y='1' width='58' height='88' rx='4' fill='#f8f3e3' stroke='" + ART_GOLD + "' stroke-width='1'/>" +
+      "<g fill='none' stroke='" + ART_GOLD + "' stroke-width='.7' opacity='.75'>" +
+        "<path d='M5 13 Q5 5 13 5'/><path d='M47 5 Q55 5 55 13'/>" +
+        "<path d='M55 77 Q55 85 47 85'/><path d='M13 85 Q5 85 5 77'/>" +
+      "</g>" +
+      "<circle cx='30' cy='45' r='26' fill='none' stroke='" + ART_GOLD + "' stroke-width='.6' opacity='.5'/>" +
+      "<path d='M30 16 C 17 34, 10 41, 10 51 C 10 61, 23 65, 28.5 57.5 C 27.5 66, 24 71.5, 19.5 75.5 L40.5 75.5 C 36 71.5, 32.5 66, 31.5 57.5 C 37 65, 50 61, 50 51 C 50 41, 43 34, 30 16 Z' fill='#23232e' stroke='" + ART_GOLD + "' stroke-width='1.2'/>" +
+      "<path d='M30 27 C 22 38, 18 44, 18 50.5 C 18 56, 24 58, 27.5 54' fill='none' stroke='" + ART_GOLD + "' stroke-width='.9' opacity='.85'/>" +
+      "</svg>";
+  }
+
+  function faceCenterHTML(s, r) {
+    var su = SUIT[s];
+    if (r === 1) {
+      if (s === 0) return aceSpadeHTML();
+      return "<div class='big'><span class='ring'></span><span class='ag'>" + su + "</span></div>";
+    }
+    if (r >= 11) return courtHTML(s, r);
+    var L = PIPS[r], h = "<div class='pips" + (r <= 3 ? " few" : "") + "'>";
+    for (var i = 0; i < L.length; i++)
+      h += "<span class='pip" + (L[i][2] ? " f" : "") + "' style='left:" + L[i][0] + "%;top:" + L[i][1] + "%'>" + su + "</span>";
+    return h + "</div>";
+  }
+
+  function mkCard(id, s, r) {
+    var el = document.createElement("div");
+    el.className = "card down " + (RED[s] ? "red" : "black");
+    var lab = RLAB[r - 1], su = SUIT[s];
+    el.innerHTML =
+      "<div class='in'>" +
+        "<div class='face front'>" +
+          "<div class='corner tl'><span class='r'>" + lab + "</span><span class='s'>" + su + "</span></div>" +
+          "<div class='corner br'><span class='r'>" + lab + "</span><span class='s'>" + su + "</span></div>" +
+          faceCenterHTML(s, r) +
+        "</div>" +
+        "<div class='face back'></div>" +
+      "</div>";
+    board.appendChild(el);
+    var card = { id: id, s: s, r: r, faceUp: false, el: el, _z: 1 };
+    el.addEventListener("pointerdown", function (e) { onCardDown(e, card); });
+    return card;
+  }
+
+  function buildBoard() {
+    board.innerHTML = "";
+    stockBase = null; wasteBase = null;
+    foundBase = []; cellBase = []; doneBase = []; tabBase = [];
+    var i;
+    if (fam !== "freecell") {
+      stockBase = mkBase(MX, TOPY, "");
+      stockBase.addEventListener("pointerdown", function (e) { e.preventDefault(); dealStock(); });
+    }
+    if (fam === "klondike") wasteBase = mkBase(WX, TOPY, "");
+    if (fam === "freecell") for (i = 0; i < 4; i++) cellBase.push(mkBase(CLX(i), TOPY, "FREE"));
+    if (fam !== "spider") for (i = 0; i < 4; i++) foundBase.push(mkBase(FX(i), TOPY, "<span class='glyph'>" + SUIT[i] + "</span>"));
+    if (fam === "spider") for (i = 0; i < 8; i++) doneBase.push(mkBase(DNX(i), TOPY, "<span class='glyph'>K</span>"));
+    for (i = 0; i < COLS; i++) tabBase.push(mkBase(TX(i), TY, ""));
+
+    /* deck */
+    cards = [];
+    var id = 0, s, r, cp;
+    if (fam === "spider") {
+      var suits = mode === "spider1" ? [0] : [0, 1];
+      var copies = 8 / suits.length;
+      for (cp = 0; cp < copies; cp++)
+        for (s = 0; s < suits.length; s++)
+          for (r = 1; r <= 13; r++)
+            cards.push(mkCard(id++, suits[s], r));
+    } else {
+      for (s = 0; s < 4; s++)
+        for (r = 1; r <= 13; r++)
+          cards.push(mkCard(id++, s, r));
+    }
+  }
+  board.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+
+  /* ---------- Helpers ---------- */
+  function fmt(sec) {
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return m + ":" + (s < 10 ? "0" : "") + s;
+  }
+  function nowSecs() { return started ? Math.floor((Date.now() - startTime) / 1000) : 0; }
+  function startTimer() {
+    stopTimer();
+    timerInt = setInterval(function () { timeEl.textContent = fmt(nowSecs()); }, 500);
+  }
+  function stopTimer() { if (timerInt) { clearInterval(timerInt); timerInt = null; } }
+
+  function shuffle(a, rng) {
+    rng = rng || Math.random;
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(rng() * (i + 1));
+      var t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+
+  function locate(card) {
+    var i, f, t;
+    i = stock.indexOf(card); if (i >= 0) return { pile: "stock", idx: i };
+    i = waste.indexOf(card); if (i >= 0) return { pile: "waste", idx: i };
+    for (f = 0; f < 4; f++) { i = found[f].indexOf(card); if (i >= 0) return { pile: "found", fi: f, idx: i }; }
+    for (f = 0; f < 4; f++) { i = cells[f].indexOf(card); if (i >= 0) return { pile: "cell", ci: f, idx: i }; }
+    for (f = 0; f < done.length; f++) { if (done[f].indexOf(card) >= 0) return { pile: "done" }; }
+    for (t = 0; t < COLS; t++) { i = tab[t].indexOf(card); if (i >= 0) return { pile: "tab", ti: t, idx: i }; }
+    return null;
+  }
+  function isTop(loc) {
+    if (loc.pile === "waste") return loc.idx === waste.length - 1;
+    if (loc.pile === "found") return loc.idx === found[loc.fi].length - 1;
+    if (loc.pile === "cell") return loc.idx === cells[loc.ci].length - 1;
+    if (loc.pile === "tab") return loc.idx === tab[loc.ti].length - 1;
+    return false;
+  }
+
+  function canDropTab(card, t) {
+    var p = tab[t];
+    if (fam === "spider") {
+      if (!p.length) return true;
+      var tp = p[p.length - 1];
+      return tp.faceUp && card.r === tp.r - 1;
+    }
+    if (fam === "freecell") {
+      if (!p.length) return true;
+      var tf = p[p.length - 1];
+      return RED[tf.s] !== RED[card.s] && card.r === tf.r - 1;
+    }
+    if (!p.length) return card.r === 13;
+    var top = p[p.length - 1];
+    return top.faceUp && RED[top.s] !== RED[card.s] && card.r === top.r - 1;
+  }
+  function canFound(card, f) {
+    if (fam === "spider") return false;
+    var p = found[f];
+    if (!p.length) return card.r === 1;
+    var top = p[p.length - 1];
+    return top.s === card.s && card.r === top.r + 1;
+  }
+  function foundTotal() {
+    return found[0].length + found[1].length + found[2].length + found[3].length;
+  }
+
+  /* FreeCell supermove capacity. excl: a column index to treat as non-empty
+     (the drop target), or -1 for none. */
+  function freeCellCount() {
+    var e = 0;
+    for (var i = 0; i < 4; i++) if (!cells[i].length) e++;
+    return e;
+  }
+  function emptyColCount(excl) {
+    var k = 0;
+    for (var t = 0; t < COLS; t++) if (t !== excl && !tab[t].length) k++;
+    return k;
+  }
+  function maxMovable(excl) {
+    return (1 + freeCellCount()) * Math.pow(2, emptyColCount(excl));
+  }
+
+  /* ---------- Undo (snapshot history) ---------- */
+  function snap() {
+    function ids(p) { return p.map(function (c) { return c.id; }); }
+    return {
+      s: ids(stock), w: ids(waste),
+      f: found.map(ids), c: cells.map(ids), d: done.map(ids), t: tab.map(ids),
+      up: cards.map(function (c) { return c.faceUp ? 1 : 0; }),
+      m: moves
+    };
+  }
+  function restore(o) {
+    function byId(a) { return a.map(function (id) { return cards[id]; }); }
+    stock = byId(o.s); waste = byId(o.w);
+    found = o.f.map(byId); cells = o.c.map(byId); done = o.d.map(byId);
+    tab = o.t.map(byId);
+    for (var i = 0; i < cards.length; i++) cards[i].faceUp = !!o.up[i];
+    moves = o.m;
+    lastMoved = [];
+    layout();
+  }
+  function pushHistory() {
+    hist.push(snap());
+    if (hist.length > 1000) hist.shift();
+    if (!started) { started = true; startTime = Date.now(); startTimer(); }
+    undoBtn.disabled = false;
+  }
+  function undo() {
+    if (!hist.length || busy || wonFlag) return;
+    restore(hist.pop());
+    undoBtn.disabled = hist.length === 0;
+  }
+
+  /* ---------- Layout ---------- */
+  function place(card, x, y, z) {
+    card.el.style.left = x + "px";
+    card.el.style.top = y + "px";
+    card._z = z;
+    card.el.style.zIndex = (lastMoved.indexOf(card.id) >= 0 ? z + 500 : z);
+    card.el.classList.toggle("down", !card.faceUp);
+  }
+
+  function layout() {
+    var i, f;
+    for (i = 0; i < stock.length; i++) place(stock[i], MX, TOPY, i + 1);
+    if (fam === "klondike") {
+      var vis = draw3 ? Math.min(3, waste.length) : Math.min(1, waste.length);
+      var fanStart = waste.length - vis;
+      for (i = 0; i < waste.length; i++) {
+        var k = Math.max(0, i - fanStart);
+        place(waste[i], WX + k * FAN, TOPY, i + 1);
+      }
+    }
+    if (fam !== "spider")
+      for (f = 0; f < 4; f++)
+        for (i = 0; i < found[f].length; i++)
+          place(found[f][i], FX(f), TOPY, i + 1);
+    if (fam === "freecell")
+      for (f = 0; f < 4; f++)
+        for (i = 0; i < cells[f].length; i++)
+          place(cells[f][i], CLX(f), TOPY, i + 1);
+    if (fam === "spider")
+      for (f = 0; f < done.length; f++)
+        for (i = 0; i < done[f].length; i++)
+          place(done[f][i], DNX(f), TOPY, i + 1);
+
+    var avail = DH - TY - CH - 8;
+    for (var t = 0; t < COLS; t++) {
+      var p = tab[t], need = 0, dOff = OFF_DOWN, uOff = OFF_UP;
+      for (i = 0; i < p.length - 1; i++) need += p[i].faceUp ? uOff : dOff;
+      if (need > avail && need > 0) {
+        var fac = avail / need;
+        dOff = Math.max(5, dOff * fac);
+        uOff = Math.max(15, uOff * fac);
+      }
+      var y = TY;
+      for (i = 0; i < p.length; i++) {
+        place(p[i], TX(t), y, i + 1);
+        y += p[i].faceUp ? uOff : dOff;
+      }
+    }
+
+    if (stockBase)
+      stockBase.textContent = (fam === "klondike" && !stock.length && waste.length) ? "REDEAL" : "";
+
+    if (lastMoved.length) {
+      var moved = lastMoved.slice();
+      lastMoved = [];
+      setTimeout(function () {
+        moved.forEach(function (id) { cards[id].el.style.zIndex = cards[id]._z; });
+      }, 300);
+    }
+    updateHUD();
+    updateAutoBtn();
+  }
+
+  function updateHUD() {
+    movesEl.textContent = moves;
+    timeEl.textContent = fmt(wonFlag ? finalTime : nowSecs());
+    winsEl.textContent = getWins();
+    var b = getBest();
+    bestEl.textContent = b === null ? "--" : fmt(b);
+    undoBtn.disabled = hist.length === 0;
+  }
+
+  /* ---------- Moves ---------- */
+  function flipTop(t) {
+    var p = tab[t];
+    if (p.length && !p[p.length - 1].faceUp) p[p.length - 1].faceUp = true;
+  }
+  function removeFromSource(loc, count) {
+    if (loc.pile === "waste") return waste.splice(loc.idx, count);
+    if (loc.pile === "found") return found[loc.fi].splice(loc.idx, count);
+    if (loc.pile === "cell") return cells[loc.ci].splice(loc.idx, count);
+    if (loc.pile === "tab") {
+      var out = tab[loc.ti].splice(loc.idx, count);
+      flipTop(loc.ti);
+      return out;
+    }
+    return [];
+  }
+
+  /* Spider: sweep any complete same-suit K..A run off a column tail. */
+  function sweepRuns() {
+    for (var t = 0; t < COLS; t++) {
+      var again = true;
+      while (again) {
+        again = false;
+        var p = tab[t];
+        if (p.length < 13) break;
+        var ok = true, base = p.length - 13, lead = p[base];
+        if (!lead.faceUp) ok = false;
+        for (var i = 0; ok && i < 13; i++) {
+          var c = p[base + i];
+          if (!c.faceUp || c.s !== lead.s || c.r !== 13 - i) ok = false;
+        }
+        if (ok) {
+          var run = p.splice(base, 13);
+          run.reverse(); /* ace first, king on top of the done pile */
+          done.push(run);
+          run.forEach(function (c2) { lastMoved.push(c2.id); });
+          flipTop(t);
+          again = true;
+        }
+      }
+    }
+  }
+
+  function afterMove() {
+    if (fam === "spider") sweepRuns();
+    layout();
+    checkWin();
+  }
+
+  function dealStock() {
+    if (busy || wonFlag) return;
+    if (fam === "freecell") return;
+    if (fam === "spider") {
+      if (!stock.length) return;
+      /* no dealing onto empty columns */
+      var blocked = [];
+      for (var t0 = 0; t0 < COLS; t0++) if (!tab[t0].length) blocked.push(t0);
+      if (blocked.length) {
+        blocked.forEach(function (t1) { tabBase[t1].classList.add("hint"); });
+        setTimeout(function () {
+          blocked.forEach(function (t1) { tabBase[t1].classList.remove("hint"); });
+        }, 600);
+        return;
+      }
+      pushHistory();
+      for (var t2 = 0; t2 < COLS && stock.length; t2++) {
+        var sc = stock.pop();
+        sc.faceUp = true;
+        tab[t2].push(sc);
+        lastMoved.push(sc.id);
+      }
+      moves++;
+      afterMove();
+      return;
+    }
+    /* klondike */
+    if (!stock.length) {
+      if (!waste.length) return;
+      pushHistory();
+      while (waste.length) {
+        var c = waste.pop();
+        c.faceUp = false;
+        stock.push(c);
+      }
+      moves++;
+      layout();
+      return;
+    }
+    pushHistory();
+    var n = draw3 ? 3 : 1;
+    for (var i = 0; i < n && stock.length; i++) {
+      var d = stock.pop();
+      d.faceUp = true;
+      waste.push(d);
+      lastMoved.push(d.id);
+    }
+    moves++;
+    afterMove();
+  }
+
+  function tryAutoSend(card, loc) {
+    if (fam === "spider") return false;
+    for (var f = 0; f < 4; f++) {
+      if (canFound(card, f)) {
+        pushHistory();
+        removeFromSource(loc, 1);
+        found[f].push(card);
+        moves++;
+        lastMoved.push(card.id);
+        afterMove();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /* ---------- Drag & drop ---------- */
+  var drag = null;
+
+  function toDesign(e) {
+    var r = board.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / S, y: (e.clientY - r.top) / S };
+  }
+
+  /* Which run may be picked up starting at loc? null = not draggable. */
+  function grabSet(card, loc) {
+    if (loc.pile === "waste") {
+      return loc.idx === waste.length - 1 ? [card] : null;
+    }
+    if (loc.pile === "found") {
+      return loc.idx === found[loc.fi].length - 1 ? [card] : null;
+    }
+    if (loc.pile === "cell") {
+      return loc.idx === cells[loc.ci].length - 1 ? [card] : null;
+    }
+    /* tab */
+    var seq = tab[loc.ti].slice(loc.idx), i, c;
+    if (fam === "spider") {
+      for (i = 0; i < seq.length; i++) {
+        c = seq[i];
+        if (!c.faceUp || c.s !== seq[0].s || c.r !== seq[0].r - i) return null;
+      }
+      return seq;
+    }
+    if (fam === "freecell") {
+      for (i = 0; i < seq.length; i++) {
+        c = seq[i];
+        if (i > 0 && (RED[c.s] === RED[seq[i - 1].s] || c.r !== seq[i - 1].r - 1)) return null;
+      }
+      if (seq.length > maxMovable(-1)) return null;
+      return seq;
+    }
+    return seq; /* klondike: any face-up tail run */
+  }
+
+  function onCardDown(e, card) {
+    if (busy || wonFlag || drag) return;
+    e.preventDefault();
+    var loc = locate(card);
+    if (!loc) return;
+
+    if (loc.pile === "stock") { dealStock(); return; }
+    if (loc.pile === "done") return;
+
+    /* double click / double tap: auto-send to foundation */
+    var now = Date.now();
+    if (tapCard === card.id && now - tapTime < 400) {
+      tapCard = -1;
+      if (card.faceUp && isTop(loc) && tryAutoSend(card, loc)) return;
+    } else {
+      tapCard = card.id;
+      tapTime = now;
+    }
+
+    if (!card.faceUp) return;
+
+    var set = grabSet(card, loc);
+    if (!set) return;
+    startDrag(e, card, set, loc);
+  }
+
+  function startDrag(e, card, set, loc) {
+    var p = toDesign(e);
+    drag = {
+      pid: e.pointerId,
+      set: set,
+      loc: loc,
+      start: p,
+      orig: set.map(function (c) {
+        return { x: parseFloat(c.el.style.left) || 0, y: parseFloat(c.el.style.top) || 0 };
+      }),
+      moved: false,
+      target: null,
+      hintEl: null
+    };
+    window.addEventListener("pointermove", onDragMove);
+    window.addEventListener("pointerup", onDragEnd);
+    window.addEventListener("pointercancel", onDragEnd);
+  }
+
+  function liftSet() {
+    drag.set.forEach(function (c, i) {
+      c.el.classList.add("drag");
+      c.el.style.zIndex = 3000 + i;
+    });
+  }
+  function dropSet() {
+    drag.set.forEach(function (c) { c.el.classList.remove("drag"); });
+  }
+
+  function overlapArea(ax, ay, bx, by, bw, bh) {
+    var ox = Math.min(ax + CW, bx + bw) - Math.max(ax, bx);
+    var oy = Math.min(ay + CH, by + bh) - Math.max(ay, by);
+    return (ox > 0 && oy > 0) ? ox * oy : 0;
+  }
+
+  function findTarget(x, y) {
+    var best = null, bestA = 0, a, f, t, ci;
+    var lead = drag.set[0], loc = drag.loc;
+    if (fam !== "spider" && drag.set.length === 1) {
+      for (f = 0; f < 4; f++) {
+        if (loc.pile === "found" && loc.fi === f) continue;
+        if (!canFound(lead, f)) continue;
+        a = overlapArea(x, y, FX(f), TOPY, CW, CH);
+        if (a > bestA) { bestA = a; best = { k: "found", fi: f }; }
+      }
+    }
+    if (fam === "freecell" && drag.set.length === 1) {
+      for (ci = 0; ci < 4; ci++) {
+        if (loc.pile === "cell" && loc.ci === ci) continue;
+        if (cells[ci].length) continue;
+        a = overlapArea(x, y, CLX(ci), TOPY, CW, CH);
+        if (a > bestA) { bestA = a; best = { k: "cell", ci: ci }; }
+      }
+    }
+    for (t = 0; t < COLS; t++) {
+      if (loc.pile === "tab" && loc.ti === t) continue;
+      if (!canDropTab(lead, t)) continue;
+      /* freecell: moving to an empty column halves the supermove capacity */
+      if (fam === "freecell" && !tab[t].length && drag.set.length > maxMovable(t)) continue;
+      a = overlapArea(x, y, TX(t), TY, CW, DH - TY);
+      if (a > bestA) { bestA = a; best = { k: "tab", ti: t }; }
+    }
+    return best;
+  }
+
+  function setHint(target) {
+    if (drag.hintEl) { drag.hintEl.classList.remove("hint"); drag.hintEl = null; }
+    drag.target = target;
+    if (!target) return;
+    var el;
+    if (target.k === "found") {
+      var fp = found[target.fi];
+      el = fp.length ? fp[fp.length - 1].el : foundBase[target.fi];
+    } else if (target.k === "cell") {
+      el = cellBase[target.ci];
+    } else {
+      var tp = tab[target.ti];
+      el = tp.length ? tp[tp.length - 1].el : tabBase[target.ti];
+    }
+    el.classList.add("hint");
+    drag.hintEl = el;
+  }
+
+  function onDragMove(e) {
+    if (!drag || e.pointerId !== drag.pid) return;
+    var p = toDesign(e);
+    var dx = p.x - drag.start.x, dy = p.y - drag.start.y;
+    if (!drag.moved) {
+      if (dx * dx + dy * dy < 36) return;
+      drag.moved = true;
+      liftSet();
+    }
+    drag.set.forEach(function (c, i) {
+      c.el.style.left = (drag.orig[i].x + dx) + "px";
+      c.el.style.top = (drag.orig[i].y + dy) + "px";
+    });
+    setHint(findTarget(drag.orig[0].x + dx, drag.orig[0].y + dy));
+  }
+
+  function onDragEnd(e) {
+    if (!drag || e.pointerId !== drag.pid) return;
+    window.removeEventListener("pointermove", onDragMove);
+    window.removeEventListener("pointerup", onDragEnd);
+    window.removeEventListener("pointercancel", onDragEnd);
+    var d = drag;
+    setHint(null);
+    dropSet();
+    drag = null;
+
+    if (!d.moved) { layout(); return; }
+
+    if (d.target && e.type !== "pointercancel") {
+      pushHistory();
+      var movedCards = removeFromSource(d.loc, d.set.length);
+      if (d.target.k === "found") found[d.target.fi].push(movedCards[0]);
+      else if (d.target.k === "cell") cells[d.target.ci].push(movedCards[0]);
+      else for (var i = 0; i < movedCards.length; i++) tab[d.target.ti].push(movedCards[i]);
+      moves++;
+      movedCards.forEach(function (c) { lastMoved.push(c.id); });
+      afterMove();
+    } else {
+      /* snap back with animation */
+      d.set.forEach(function (c) { lastMoved.push(c.id); });
+      layout();
+    }
+  }
+
+  /* ---------- Auto-complete ---------- */
+  function canAutoComplete() {
+    if (wonFlag || busy) return false;
+    if (fam === "spider") return false;
+    if (foundTotal() === cards.length) return false;
+    var t, i, p;
+    if (fam === "klondike") {
+      if (stock.length || waste.length) return false;
+      for (t = 0; t < COLS; t++)
+        for (i = 0; i < tab[t].length; i++)
+          if (!tab[t][i].faceUp) return false;
+      return true;
+    }
+    /* freecell: safe once every column is in non-ascending rank order */
+    for (t = 0; t < COLS; t++) {
+      p = tab[t];
+      for (i = 0; i < p.length - 1; i++)
+        if (p[i].r < p[i + 1].r) return false;
+    }
+    return true;
+  }
+  function updateAutoBtn() {
+    autoBtn.classList.toggle("hidden", !canAutoComplete());
+  }
+  function autoComplete() {
+    if (!canAutoComplete()) return;
+    busy = true;
+    pushHistory();
+    autoBtn.classList.add("hidden");
+    var iv = setInterval(function () {
+      var best = null, bestLoc = null, bestF = -1;
+      function consider(c, loc) {
+        for (var f = 0; f < 4; f++)
+          if (canFound(c, f) && (!best || c.r < best.r)) { best = c; bestLoc = loc; bestF = f; }
+      }
+      for (var t = 0; t < COLS; t++) {
+        var p = tab[t];
+        if (p.length) consider(p[p.length - 1], { pile: "tab", ti: t, idx: p.length - 1 });
+      }
+      for (var ci = 0; ci < 4; ci++) {
+        var q = cells[ci];
+        if (q.length) consider(q[q.length - 1], { pile: "cell", ci: ci, idx: q.length - 1 });
+      }
+      if (!best) {
+        clearInterval(iv);
+        busy = false;
+        checkWin();
+        return;
+      }
+      removeFromSource(bestLoc, 1);
+      found[bestF].push(best);
+      moves++;
+      lastMoved.push(best.id);
+      layout();
+      if (foundTotal() === cards.length) {
+        clearInterval(iv);
+        busy = false;
+        checkWin();
+      }
+    }, 110);
+  }
+  autoBtn.addEventListener("click", autoComplete);
+
+  /* ---------- Win ---------- */
+  function isWon() {
+    return fam === "spider" ? done.length === 8 : foundTotal() === cards.length;
+  }
+  function checkWin() {
+    if (!wonFlag && isWon()) doWin();
+  }
+  function doWin() {
+    wonFlag = true;
+    busy = false;
+    finalTime = nowSecs();
+    stopTimer();
+    timeEl.textContent = fmt(finalTime);
+    var wins = getWins() + 1;
+    lsSet(winsKey(), wins);
+    var best = getBest();
+    if (best === null || finalTime < best) { best = finalTime; lsSet(bestKey(), best); }
+    if (dailyRun && fam === "klondike") {
+      var dk = arcade.dailyKey();
+      var prevDaily = null;
+      try { prevDaily = JSON.parse(lsGet("sol_daily") || "null"); } catch (e) {}
+      if (!prevDaily || prevDaily.date !== dk || finalTime < prevDaily.time)
+        lsSet("sol_daily", JSON.stringify({ date: dk, time: finalTime }));
+    }
+    updateHUD();
+    celebrate();
+    setTimeout(function () {
+      document.getElementById("wTime").textContent = fmt(finalTime);
+      document.getElementById("wMoves").textContent = moves;
+      document.getElementById("wBest").textContent = fmt(best);
+      document.getElementById("wWins").textContent = wins;
+      winOverlay.classList.remove("hidden");
+    }, 1400);
+  }
+
+  /* ---------- Celebration (classic bouncing cards with trails) ---------- */
+  var fxCtx = fx.getContext("2d"), fxRun = false, fxRAF = 0;
+  var fxDPR = Math.min(window.devicePixelRatio || 1, 2), fxW = 0, fxH = 0;
+  function sizeFx() {
+    fxW = window.innerWidth; fxH = window.innerHeight;
+    fx.width = Math.round(fxW * fxDPR);
+    fx.height = Math.round(fxH * fxDPR);
+    fxCtx.setTransform(fxDPR, 0, 0, fxDPR, 0, 0);
+  }
+  function stopCelebrate() {
+    fxRun = false;
+    if (fxRAF) cancelAnimationFrame(fxRAF);
+    fxCtx.clearRect(0, 0, fxW, fxH);
+    fx.style.display = "none";
+    shimmer.style.display = "none";
+  }
+  function celebrate() {
+    sizeFx();
+    fx.style.display = "block";
+    shimmer.style.display = "block";
+    fxRun = true;
+
+    var r = board.getBoundingClientRect();
+    var cw = CW * S, ch = CH * S;
+    var queue = [], f, i;
+    if (fam === "spider") {
+      for (f = 0; f < done.length; f++) {
+        var dp = done[f];
+        for (i = dp.length - 1; i >= 0; i--)
+          queue.push({ card: dp[i], fx0: r.left + DNX(f) * S, fy0: r.top + TOPY * S });
+      }
+    } else {
+      for (var rank = 13; rank >= 1; rank--)
+        for (f = 0; f < 4; f++) {
+          var pile = found[f];
+          var c = pile[rank - 1];
+          if (c) queue.push({ card: c, fx0: r.left + FX(f) * S, fy0: r.top + TOPY * S });
+        }
+    }
+    var parts = [], lastSpawn = 0, qi = 0;
+
+    function cardPath(ctx, x, y) {
+      ctx.beginPath();
+      var rad = 7 * S;
+      ctx.moveTo(x + rad, y);
+      ctx.arcTo(x + cw, y, x + cw, y + ch, rad);
+      ctx.arcTo(x + cw, y + ch, x, y + ch, rad);
+      ctx.arcTo(x, y + ch, x, y, rad);
+      ctx.arcTo(x, y, x + cw, y, rad);
+      ctx.closePath();
+    }
+
+    function drawMini(p) {
+      var ctx = fxCtx, x = p.x, y = p.y;
+      ctx.save();
+      /* motion-blur trail: ghost cards fading back along the velocity vector */
+      for (var k = 3; k >= 1; k--) {
+        cardPath(ctx, x - p.vx * k * 1.15, y - p.vy * k * 1.15);
+        ctx.globalAlpha = 0.045 * (4 - k);
+        ctx.fillStyle = "#f6ecd2";
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      cardPath(ctx, x, y);
+      ctx.fillStyle = "#fdfaf1";
+      ctx.fill();
+      ctx.strokeStyle = "#b58a2e";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      var c = p.card;
+      ctx.fillStyle = RED[c.s] ? "#a92238" : "#23232e";
+      ctx.font = "bold " + Math.round(20 * S) + "px Georgia, serif";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillText(RLAB[c.r - 1], x + 7 * S, y + 6 * S);
+      ctx.fillText(SUIT[c.s], x + 7 * S, y + 26 * S);
+      ctx.font = "bold " + Math.round(48 * S) + "px Georgia, serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(SUIT[c.s], x + cw / 2, y + ch / 2 + 4 * S);
+      ctx.restore();
+    }
+
+    function step(ts) {
+      if (!fxRun) return;
+      if (qi < queue.length && ts - lastSpawn > 100) {
+        lastSpawn = ts;
+        var q = queue[qi++];
+        parts.push({
+          card: q.card, x: q.fx0, y: q.fy0,
+          vx: (Math.random() * 5 + 2.5) * (Math.random() < 0.5 ? -1 : 1) * S,
+          vy: -(Math.random() * 6 + 2) * S
+        });
+      }
+      for (var i = parts.length - 1; i >= 0; i--) {
+        var p = parts[i];
+        p.vy += 0.45 * S;
+        p.x += p.vx;
+        p.y += p.vy;
+        if (p.y > fxH - ch) {
+          p.y = fxH - ch;
+          p.vy = -Math.abs(p.vy) * 0.78;
+        }
+        drawMini(p);
+        if (p.x < -cw - 10 || p.x > fxW + 10) parts.splice(i, 1);
+      }
+      if (qi >= queue.length && !parts.length) { fxRun = false; return; }
+      fxRAF = requestAnimationFrame(step);
+    }
+    fxRAF = requestAnimationFrame(step);
+  }
+
+  /* ---------- Game setup ---------- */
+  function newGame(replay) {
+    stopCelebrate();
+    winOverlay.classList.add("hidden");
+    autoBtn.classList.add("hidden");
+    busy = false;
+    wonFlag = false;
+    if (!replay) { dailyRun = false; syncTbTitle(); }
+    if (!replay || !deckOrder || deckOrder.length !== cards.length)
+      deckOrder = shuffle(cards.map(function (c) { return c.id; }));
+    stock = []; waste = [];
+    found = [[], [], [], []];
+    cells = [[], [], [], []];
+    done = [];
+    tab = [];
+    for (var t = 0; t < COLS; t++) tab.push([]);
+    moves = 0; hist = []; lastMoved = [];
+    started = false; finalTime = 0;
+    stopTimer();
+    timeEl.textContent = "0:00";
+
+    var p = 0, i, j, c, d;
+    if (fam === "spider") {
+      for (i = 0; i < COLS; i++) {
+        var n = i < 4 ? 6 : 5;
+        for (j = 0; j < n; j++) {
+          c = cards[deckOrder[p++]];
+          c.faceUp = (j === n - 1);
+          tab[i].push(c);
+        }
+      }
+      for (; p < cards.length; p++) {
+        d = cards[deckOrder[p]];
+        d.faceUp = false;
+        stock.push(d);
+      }
+    } else if (fam === "freecell") {
+      for (i = 0; p < cards.length; p++, i++) {
+        c = cards[deckOrder[p]];
+        c.faceUp = true;
+        tab[i % COLS].push(c);
+      }
+    } else {
+      for (i = 0; i < 7; i++)
+        for (j = 0; j <= i; j++) {
+          c = cards[deckOrder[p++]];
+          c.faceUp = (j === i);
+          tab[i].push(c);
+        }
+      for (; p < 52; p++) {
+        d = cards[deckOrder[p]];
+        d.faceUp = false;
+        stock.push(d);
+      }
+    }
+
+    /* start every card at the stock position, then animate the deal */
+    board.classList.add("noanim");
+    cards.forEach(function (cc, k) {
+      cc.el.style.left = MX + "px";
+      cc.el.style.top = TOPY + "px";
+      cc.el.style.zIndex = k + 1;
+      cc.el.classList.toggle("down", !cc.faceUp);
+    });
+    void board.offsetWidth;
+    requestAnimationFrame(function () {
+      board.classList.remove("noanim");
+      layout();
+    });
+    updateHUD();
+  }
+
+  /* ---------- Mode switching ---------- */
+  function setMode(m) {
+    if (!MODE_CONF[m]) m = "klondike";
+    mode = m;
+    fam = m === "klondike" ? "klondike" : (m === "freecell" ? "freecell" : "spider");
+    var cf = MODE_CONF[m];
+    COLS = cf.cols; PITCH = cf.pitch; DW = cf.dw; DH = cf.dh;
+    WX = MX + PITCH;
+    board.style.width = DW + "px";
+    board.style.height = DH + "px";
+    deckOrder = null;
+    buildBoard();
+    drawBtn.classList.toggle("hidden", fam !== "klondike");
+    resize();
+  }
+  modeSel.addEventListener("change", function () {
+    setMode(modeSel.value);
+    lsSet("sol_mode", mode);
+    modeSel.value = mode;
+    newGame(false);
+  });
+
+  /* ---------- Toolbar ---------- */
+  document.getElementById("newBtn").addEventListener("click", function () { newGame(false); });
+  var dailyRun = false;
+  var tbTitle = document.querySelector(".tb-title");
+  function syncTbTitle() { tbTitle.textContent = dailyRun ? "SOLITAIRE — DAILY" : "SOLITAIRE"; }
+  document.getElementById("dailyBtn").addEventListener("click", function () {
+    if (mode !== "klondike") {
+      setMode("klondike");
+      lsSet("sol_mode", mode);
+      modeSel.value = mode;
+    }
+    if (draw3) { draw3 = false; lsSet("sol_draw3", "0"); syncDrawBtn(); }
+    deckOrder = shuffle(cards.map(function (c) { return c.id; }),
+                        arcade.seededRand(arcade.dailySeed()));
+    newGame(true);
+    dailyRun = true;
+    syncTbTitle();
+  });
+  document.getElementById("restartBtn").addEventListener("click", function () { newGame(true); });
+  undoBtn.addEventListener("click", undo);
+  function syncDrawBtn() { drawBtn.textContent = draw3 ? "DRAW 3" : "DRAW 1"; }
+  drawBtn.addEventListener("click", function () {
+    draw3 = !draw3;
+    lsSet("sol_draw3", draw3 ? "1" : "0");
+    syncDrawBtn();
+    layout();
+  });
+  document.getElementById("wNewBtn").addEventListener("click", function () { newGame(false); });
+  document.getElementById("wReplayBtn").addEventListener("click", function () { newGame(true); });
+
+  /* ---------- Resize ---------- */
+  function resize() {
+    var th = toolbar.offsetHeight;
+    wrap.style.top = th + "px";
+    var w = window.innerWidth, h = window.innerHeight - th;
+    S = Math.min((w - 6) / DW, (h - 6) / DH);
+    board.style.transform = "scale(" + S + ")";
+    board.style.left = Math.max(0, (w - DW * S) / 2) + "px";
+    board.style.top = Math.max(0, (h - DH * S) / 2) + "px";
+    if (fxRun) { /* keep canvas sized during celebration */
+      sizeFx();
+    }
+  }
+  window.addEventListener("resize", resize);
+
+  /* ---------- Boot ---------- */
+  var savedMode = lsGet("sol_mode");
+  if (savedMode && MODE_CONF[savedMode]) mode = savedMode;
+  modeSel.value = mode;
+  syncDrawBtn();
+  setMode(mode);
+  newGame(false);
+})();
+</script>
+
+<a href="index.html" class="hub-link" style="bottom:14px;left:14px">&lt; ARCADE</a>
+<style>
+.hub-link{position:fixed;z-index:10000;font:700 11px/1 Georgia,serif;letter-spacing:2px;
+color:#e9dcb8;background:linear-gradient(180deg,#4a2c15,#2a150a);border:1px solid #b58a2e;
+padding:8px 12px;border-radius:999px;text-decoration:none;opacity:.6;transition:opacity .15s;cursor:pointer;
+box-shadow:inset 0 1px 0 rgba(236,210,138,.25),0 2px 6px rgba(0,0,0,.4);text-shadow:0 1px 1px rgba(0,0,0,.6);}
+.hub-link:hover{opacity:1;color:#f0d88a;}
+</style>
+</body>
+</html>

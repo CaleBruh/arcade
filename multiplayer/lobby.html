@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arcade — Multiplayer Lobby</title>
+<style>
+  :root{--bg:#0a0c14;--panel:#121626;--border:#232a44;--text:#e8ecf8;--muted:#8b94b0;--glow:#5ce1ff}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{min-height:100vh;background:var(--bg);color:var(--text);
+    font-family:"Avenir Next","Segoe UI",system-ui,sans-serif;padding:40px 20px 70px;
+    background-image:radial-gradient(ellipse 80% 50% at 50% -10%,rgba(92,120,255,.14),transparent)}
+  header{text-align:center;margin-bottom:28px}
+  h1{font-size:clamp(28px,5vw,46px);letter-spacing:12px;text-indent:12px;color:var(--glow);
+    text-shadow:0 0 7px rgba(92,225,255,.9),0 0 26px rgba(92,225,255,.5)}
+  header p{color:var(--muted);letter-spacing:3px;margin-top:14px;font-size:13px;text-transform:uppercase}
+  .wrap{max-width:860px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:16px}
+  .card h2{font-size:13px;letter-spacing:3px;color:var(--muted);text-transform:uppercase;margin-bottom:14px}
+  label{display:block;font-size:11px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
+  input,select{font:600 15px inherit;color:var(--text);background:#0c0f1c;border:1px solid var(--border);
+    border-radius:9px;padding:11px 13px;width:100%}
+  input:focus,select:focus{outline:none;border-color:var(--glow)}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .row>*{flex:1;min-width:150px}
+  button{font:700 12px/1 inherit;letter-spacing:2px;text-transform:uppercase;cursor:pointer;
+    color:#07101c;background:var(--glow);border:0;border-radius:999px;padding:13px 22px;
+    transition:transform .12s,filter .12s}
+  button:hover{filter:brightness(1.1);transform:translateY(-1px)}
+  button.ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
+  button.ghost:hover{color:var(--glow);border-color:var(--glow)}
+  button:disabled{opacity:.4;cursor:not-allowed;transform:none}
+  .games{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+  .g{background:#0c0f1c;border:1px solid var(--border);border-radius:11px;padding:14px;cursor:pointer;
+    transition:border-color .14s,transform .14s}
+  .g:hover{border-color:var(--glow);transform:translateY(-2px)}
+  .g.sel{border-color:var(--glow);background:color-mix(in srgb,var(--glow) 8%,#0c0f1c)}
+  .g .n{font-weight:700;font-size:16px}
+  .g .b{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.45}
+  .g .c{font-size:10px;letter-spacing:1.5px;color:var(--glow);margin-top:8px;text-transform:uppercase}
+  .players{display:flex;flex-wrap:wrap;gap:8px}
+  .pl{background:#0c0f1c;border:1px solid var(--border);border-radius:999px;padding:7px 13px;font-size:13px}
+  .pl.me{border-color:var(--glow);color:var(--glow)}
+  .pl.host::after{content:" ★";color:#f3c969}
+  .code{font:800 34px/1 "Courier New",monospace;letter-spacing:10px;color:var(--glow);text-align:center;
+    padding:14px 0 4px}
+  .hint{font-size:12px;color:var(--muted);text-align:center;margin-top:4px}
+  #status{position:fixed;top:10px;right:14px;font-size:11px;letter-spacing:1.5px;color:var(--muted)}
+  #status b{color:var(--glow)}
+  .err{color:#ff6b8a;font-size:13px;margin-top:10px;min-height:18px}
+  .roomrow{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;
+    background:#0c0f1c;border:1px solid var(--border);border-radius:9px;margin-bottom:8px;font-size:14px}
+  a.back{position:fixed;bottom:14px;left:14px;font:700 11px/1 "Courier New",monospace;letter-spacing:2px;
+    color:#cfd8ea;background:rgba(10,12,20,.72);border:1px solid rgba(140,160,210,.4);
+    padding:9px 13px;border-radius:999px;text-decoration:none;opacity:.6}
+  a.back:hover{opacity:1}
+  .hide{display:none}
+  #gameview{position:fixed;inset:0;z-index:500;background:#070a12}
+  #gamecanvas{display:block;width:100%;height:100%}
+  #quitBtn{position:fixed;bottom:14px;right:14px;z-index:501;padding:9px 16px}
+</style>
+</head>
+<body>
+<div id="status">● <span id="conn">connecting</span> <b id="pingv"></b></div>
+
+<header>
+  <h1>MULTIPLAYER</h1>
+  <p>Play the arcade together</p>
+</header>
+
+<div class="wrap">
+
+  <!-- ---------- not in a room ---------- -->
+  <div id="setup">
+    <div class="card">
+      <h2>Your name</h2>
+      <div class="row">
+        <input id="name" maxlength="16" placeholder="pick a name" autocomplete="off">
+        <button id="saveName" style="flex:0 0 auto">Save</button>
+      </div>
+    </div>
+
+    <!-- Quick match exists because at a party nobody wants to read a room
+         code out loud. Press one button, get dropped into a game. -->
+    <div class="card" id="quickCard">
+      <h2>Quick match</h2>
+      <div class="row">
+        <button id="quickAny">Play anything</button>
+        <button id="quickPicked" class="ghost" disabled>Queue for selected game</button>
+      </div>
+      <div id="queueStatus" class="hint hide"></div>
+    </div>
+
+    <div class="card">
+      <h2>Choose a game</h2>
+      <div class="games" id="games"></div>
+      <div class="row" style="margin-top:16px">
+        <button id="create" disabled>Create room</button>
+      </div>
+      <div class="err" id="err1"></div>
+    </div>
+
+    <div class="card">
+      <h2>Join with a code</h2>
+      <div class="row">
+        <input id="code" maxlength="4" placeholder="ABCD" style="text-transform:uppercase;
+          font:800 22px/1 'Courier New',monospace;letter-spacing:8px;text-align:center">
+        <button id="join" style="flex:0 0 auto">Join</button>
+      </div>
+      <div class="err" id="err2"></div>
+    </div>
+
+    <div class="card">
+      <h2>Open rooms <button id="refresh" class="ghost" style="float:right;padding:6px 12px">Refresh</button></h2>
+      <div id="roomlist"><div class="hint">no open rooms</div></div>
+    </div>
+  </div>
+
+  <!-- ---------- in a room ---------- -->
+  <div id="room" class="hide">
+    <div class="card">
+      <h2 id="roomgame">Room</h2>
+      <div class="code" id="roomcode">----</div>
+      <div class="hint">Share this code — anyone can join from the lobby</div>
+    </div>
+    <div class="card">
+      <h2>Players (<span id="pcount">0</span>/<span id="pmax">0</span>)</h2>
+      <div class="players" id="players"></div>
+    </div>
+    <div class="card">
+      <div class="row">
+        <button id="startBtn">Start game</button>
+        <button id="leaveBtn" class="ghost" style="flex:0 0 auto">Leave</button>
+      </div>
+      <div class="err" id="err3"></div>
+      <div class="hint" id="hostHint" style="margin-top:10px"></div>
+    </div>
+  </div>
+</div>
+
+<div id="gameview" class="hide">
+  <canvas id="gamecanvas"></canvas>
+  <button id="quitBtn" class="ghost">Leave game</button>
+</div>
+
+<a href="../index.html" class="back">&lt; ARCADE</a>
+
+<script src="net.js"></script>
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  let picked = null;
+
+  function showErr(el, msg) {
+    const e = $(el); e.textContent = msg;
+    setTimeout(() => { if (e.textContent === msg) e.textContent = ""; }, 4000);
+  }
+
+  net.on("open",  () => { $("conn").textContent = "connected"; net.listRooms(); });
+  net.on("close", () => { $("conn").textContent = "reconnecting…"; });
+  net.on("error", (m) => showErr(net.room ? "err3" : "err1", m.msg));
+
+  setInterval(() => { $("pingv").textContent = net.ping ? net.ping + "ms" : ""; }, 1000);
+
+  // Client modules are fetched from the server's registry rather than listed
+  // here, so adding a sim auto-registers both halves.
+  const loaded = new Set();
+  function loadGameClient(id) {
+    if (loaded.has(id)) return Promise.resolve(true);
+    return new Promise((res) => {
+      const s = document.createElement("script");
+      s.src = `games/${id}.js`;
+      s.onload = () => { loaded.add(id); res(true); };
+      s.onerror = () => res(false);
+      document.head.appendChild(s);
+    });
+  }
+
+  net.on("ready", (m) => {
+    m.games.forEach((def) => loadGameClient(def.id));
+    $("name").value = net.name;
+    const g = $("games");
+    g.innerHTML = "";
+    m.games.forEach((def) => {
+      const d = document.createElement("div");
+      d.className = "g";
+      d.innerHTML = `<div class="n">${def.name}</div><div class="b">${def.blurb}</div>
+        <div class="c">${def.min}–${def.max} players · ${def.sync === "tick" ? "realtime" : "turn-based"}</div>`;
+      d.onclick = () => {
+        picked = def.id;
+        [...g.children].forEach((c) => c.classList.remove("sel"));
+        d.classList.add("sel");
+        $("create").disabled = false;
+        $("quickPicked").disabled = false;
+      };
+      g.appendChild(d);
+    });
+  });
+
+  $("saveName").onclick = () => { net.setName($("name").value); $("saveName").textContent = "Saved";
+    setTimeout(() => ($("saveName").textContent = "Save"), 1200); };
+  $("create").onclick = () => { if (!net.name) net.setName($("name").value || "player"); net.create(picked); };
+  $("join").onclick   = () => { if (!net.name) net.setName($("name").value || "player");
+                                net.join($("code").value); };
+  $("code").addEventListener("keydown", (e) => { if (e.key === "Enter") $("join").click(); });
+  /* ---- quick match ---- */
+  let queuedFor = null;
+  function setQueueUI(msg) {
+    const el = $("queueStatus");
+    el.classList.toggle("hide", !msg);
+    el.textContent = msg || "";
+    $("quickAny").textContent = queuedFor ? "Cancel" : "Play anything";
+    $("quickPicked").textContent = queuedFor && queuedFor !== "any" ? "Cancel" : "Queue for selected game";
+  }
+  function toggleQueue(game) {
+    if (!net.name) net.setName($("name").value || "player");
+    if (queuedFor) { net.unqueue(); return; }
+    queuedFor = game;
+    net.queue(game);
+    setQueueUI("finding a game…");
+  }
+  $("quickAny").onclick = () => toggleQueue("any");
+  $("quickPicked").onclick = () => { if (picked) toggleQueue(picked); };
+
+  net.on("queued", (m) => {
+    queuedFor = m.game;
+    const label = m.game === "any" ? "any game" : m.game;
+    const short = m.n < m.need ? `waiting for ${m.need - m.n} more` : "starting shortly";
+    setQueueUI(`in the queue for ${label} — ${m.n} waiting, ${short}`);
+  });
+  net.on("unqueued", () => { queuedFor = null; setQueueUI(""); });
+  net.on("start", () => { queuedFor = null; setQueueUI(""); });
+
+  $("refresh").onclick = () => net.listRooms();
+  $("leaveBtn").onclick = () => net.leave();
+  $("startBtn").onclick = () => net.start();
+
+  net.on("rooms", (m) => {
+    const l = $("roomlist");
+    if (!m.list.length) { l.innerHTML = '<div class="hint">no open rooms</div>'; return; }
+    l.innerHTML = "";
+    m.list.forEach((r) => {
+      const d = document.createElement("div");
+      d.className = "roomrow";
+      d.innerHTML = `<span><b style="font-family:'Courier New',monospace;letter-spacing:3px">${r.code}</b>
+        &nbsp;<span style="color:var(--muted)">${r.game}</span></span>
+        <span style="color:var(--muted)">${r.n}/${r.max}</span>`;
+      const b = document.createElement("button");
+      b.textContent = "Join"; b.style.padding = "7px 15px";
+      b.onclick = () => net.join(r.code);
+      d.appendChild(b);
+      l.appendChild(d);
+    });
+  });
+
+  net.on("room", (r) => {
+    if (!r) { $("setup").classList.remove("hide"); $("room").classList.add("hide"); net.listRooms(); return; }
+    $("setup").classList.add("hide");
+    $("room").classList.remove("hide");
+    $("roomcode").textContent = r.code;
+    $("roomgame").textContent = (net.games.find((g) => g.id === r.game) || {}).name || r.game;
+    $("pcount").textContent = r.players.length;
+    $("pmax").textContent = r.max;
+    const p = $("players"); p.innerHTML = "";
+    r.players.forEach((pl) => {
+      const d = document.createElement("div");
+      d.className = "pl" + (pl.id === net.id ? " me" : "") + (pl.id === r.host ? " host" : "");
+      d.textContent = pl.name;
+      p.appendChild(d);
+    });
+    const isHost = r.host === net.id;
+    $("startBtn").disabled = !isHost;
+    const def = net.games.find((g) => g.id === r.game) || { min: 2 };
+    $("hostHint").textContent = isHost
+      ? (r.players.length < def.min ? `Waiting for ${def.min - r.players.length} more…` : "Ready when you are.")
+      : "Waiting for the host to start…";
+  });
+
+  // Game runs inside this page. Navigating away would drop the socket, and
+  // the server refuses rejoins to a started room — so we swap views instead.
+  let active = null;
+
+  function endGameView() {
+    if (active) { active.teardown(); active = null; }
+    $("gameview").classList.add("hide");
+    document.body.style.overflow = "";
+  }
+
+  net.on("start", (m) => {
+    loadGameClient(m.game).then(() => {
+      const factory = window.MPGAMES && window.MPGAMES[m.game];
+      if (!factory) { showErr("err3", "no client for " + m.game); return; }
+      endGameView();
+      $("gameview").classList.remove("hide");
+      document.body.style.overflow = "hidden";
+      active = factory($("gamecanvas"), net, m.init);
+    });
+  });
+
+  net.on("state", (m) => { if (active && active.onState) active.onState(m.s); });
+  net.on("over",  (m) => { if (active && active.onOver) active.onOver(m); });
+
+  $("quitBtn").onclick = () => { endGameView(); net.leave(); };
+  $("leaveBtn").onclick = () => { net.leave(); };
+
+  // a resumed session may land straight back into a running game
+  net.on("ready", (m) => { if (m.resumed) $("conn").textContent = "reconnected"; });
+
+  net.connect();
+})();
+</script>
+</body>
+</html>
